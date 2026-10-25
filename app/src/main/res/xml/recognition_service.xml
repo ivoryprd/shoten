@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Never offer the stub recognizer as the system's default speech recognizer (Android 12+). -->
+<recognition-service xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:selectableAsDefault="false"
+    tools:ignore="UnusedAttribute" />

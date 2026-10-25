@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:recognitionService="io.github.ivoryprd.shoten.assist.StubRecognitionService"
+    android:sessionService="io.github.ivoryprd.shoten.assist.ShotenSessionService"
+    android:settingsActivity="io.github.ivoryprd.shoten.ui.SettingsActivity"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="false"
+    android:supportsLocalInteraction="false" />

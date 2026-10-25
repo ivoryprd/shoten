@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="background">#FFF7F7FA</color>
+    <color name="surface">#FFFFFFFF</color>
+    <color name="text_primary">#FF1B1B1F</color>
+    <color name="text_secondary">#FF5F6170</color>
+    <color name="accent">#FF3F51B5</color>
+    <color name="link">#FF1A62D6</color>
+    <color name="chip_background">#FFE4E6F0</color>
+    <color name="chip_text">#FF2B2D38</color>
+    <color name="divider">#1F000000</color>
+    <color name="launcher_background">#FF3F51B5</color>
+</resources>
