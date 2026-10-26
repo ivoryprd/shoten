@@ -14,14 +14,14 @@ import android.os.Looper
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
-import android.widget.TextView
 import android.view.WindowManager
+import android.widget.TextView
+import com.google.mlkit.vision.common.InputImage
 import io.github.ivoryprd.shoten.ShotenApp
 import io.github.ivoryprd.shoten.assist.ShotenAssistService
 import io.github.ivoryprd.shoten.dict.DictionaryInstaller
 import io.github.ivoryprd.shoten.dict.importer.ImportProgress
 import io.github.ivoryprd.shoten.ocr.OcrScript
-import com.google.mlkit.vision.common.InputImage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -116,7 +116,7 @@ class DebugTriggerReceiver : BroadcastReceiver() {
         canvas.drawColor(Color.rgb(96, 96, 96))
         val location = IntArray(2)
         for (view in views) {
-            if (!view.isShown) continue
+            if (!view.isShown || view.width == 0 || view.height == 0) continue
             view.getLocationOnScreen(location)
             canvas.save()
             canvas.translate(location[0].toFloat(), location[1].toFloat())
@@ -127,7 +127,10 @@ class DebugTriggerReceiver : BroadcastReceiver() {
             }
             canvas.restore()
         }
-        out.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        // Written to a temporary file first, so that the snapshot appears only when it is complete.
+        val tmp = File(out.path + ".tmp")
+        tmp.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        tmp.renameTo(out)
         Log.i(TAG, "Snapshot of ${views.size} windows saved to $out")
         if (dumpLines) views.forEach { dumpLines(it) }
     }

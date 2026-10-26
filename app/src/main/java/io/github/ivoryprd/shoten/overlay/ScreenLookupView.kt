@@ -9,6 +9,7 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -21,8 +22,8 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.WindowInsets
-import android.view.animation.AccelerateInterpolator
-import android.view.animation.DecelerateInterpolator
+import android.view.animation.Interpolator
+import android.view.animation.PathInterpolator
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -92,8 +93,10 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
     private var scan: ScanText? = null
     private var scanStart: CharPosition? = null
     private var cardHiding = false
-    private var cardAtTop = false
+    /** In landscape, whether the card is at the start (left) side instead of the end. */
     private var cardAtStart = false
+    private val selectionRect = RectF()
+    private val cardBackground = GradientDrawable().apply { setColor(context.getColor(R.color.surface)) }
     private var initialOrientation = 0
     private var released = false
 
@@ -101,11 +104,8 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         clipChildren = false
         addView(screenshot, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
-        // Result card.
-        card.background = GradientDrawable().apply {
-            setColor(context.getColor(R.color.surface))
-            cornerRadius = 20 * density
-        }
+        // Result card (its shape is set in layoutChrome).
+        card.background = cardBackground
         card.elevation = 10 * density
         card.clipToOutline = true
         card.visibility = GONE
@@ -132,6 +132,10 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         cardContent.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         card.addView(cardContent)
         addView(card, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        // The card grows and shrinks with its content; keep the selection clear of it.
+        card.addOnLayoutChangeListener { _, l, t, r, b, oldL, oldT, oldR, oldB ->
+            if (l != oldL || t != oldT || r != oldR || b != oldB) updatePan()
+        }
 
         // Toolbar with language switch, copy and close.
         toolbar.orientation = LinearLayout.HORIZONTAL
@@ -371,10 +375,8 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
 
     override fun onCharTouched(position: CharPosition, x: Float, y: Float, initial: Boolean) {
         val result = screenshot.ocr ?: return
-        if (initial) {
-            val landscape = width > height
-            if (landscape) cardAtStart = x > width / 2f else cardAtTop = y > height / 2f
-        }
+        // In landscape the card goes to the other half of the screen.
+        if (initial && width > height) cardAtStart = x > width / 2f
         val text = result.scanText(position, MAX_SCAN_CHARS)
         if (text.text.isBlank()) return
         scan = text
@@ -411,6 +413,36 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         }
         cardHeader.text = header
         showCard()
+        updatePan()
+    }
+
+    /**
+     * Moves the screenshot so that the selected text isn't covered by the card, like Circle to
+     * Search does: in portrait the card is at the bottom and the screenshot slides up, in
+     * landscape the card is at one side and the screenshot slides sideways. The screenshot moves
+     * as little as possible, and never so far that the space it uncovers shows beside the card.
+     */
+    private fun updatePan() {
+        if (!isCardShown || card.width == 0 || !screenshot.selectionBounds(selectionRect)) {
+            screenshot.panTo(0f, 0f)
+            return
+        }
+        val margin = ui.dp(16).toFloat()
+        if (width > height) {
+            val pan = if (cardAtStart) {
+                fit(selectionRect.left, selectionRect.right, card.right + margin, width - insets.right - margin, screenshot.panTargetX)
+                    .coerceIn(0f, card.right.toFloat())
+            } else {
+                fit(selectionRect.left, selectionRect.right, insets.left + margin, card.left - margin, screenshot.panTargetX)
+                    .coerceIn(-(width - card.left).toFloat(), 0f)
+            }
+            screenshot.panTo(pan, 0f)
+        } else {
+            val top = maxOf(insets.top + margin, toolbar.bottom + margin / 2)
+            val pan = fit(selectionRect.top, selectionRect.bottom, top, card.top - margin, screenshot.panTargetY)
+                .coerceIn(-(height - card.top).toFloat(), 0f)
+            screenshot.panTo(0f, pan)
+        }
     }
 
     private val isCardShown get() = card.visibility == VISIBLE && !cardHiding
@@ -437,12 +469,13 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
             card.scaleY = 0.96f
         }
         card.animate().alpha(1f).translationX(0f).translationY(0f).scaleX(1f).scaleY(1f)
-            .setDuration(260).setInterpolator(DecelerateInterpolator(2f)).start()
+            .setDuration(450).setInterpolator(EMPHASIZED_DECELERATE).start()
     }
 
     private fun hideCard() {
         lookups.cancel()
         screenshot.setSelection(emptyList())
+        screenshot.panTo(0f, 0f)
         if (!isCardShown) return
         card.animate().cancel()
         if (!ValueAnimator.areAnimatorsEnabled()) {
@@ -452,7 +485,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         cardHiding = true
         val offset = cardOffset()
         card.animate().alpha(0f).translationX(offset[0] / 2).translationY(offset[1] / 2).scaleX(0.98f).scaleY(0.98f)
-            .setDuration(160).setInterpolator(AccelerateInterpolator())
+            .setDuration(200).setInterpolator(EMPHASIZED_ACCELERATE)
             .withEndAction {
                 cardHiding = false
                 card.visibility = GONE
@@ -463,11 +496,11 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
 
     /** The direction the card comes from: the screen edge it is placed at. */
     private fun cardOffset(): FloatArray {
-        val distance = ui.dp(32).toFloat()
+        val distance = ui.dp(48).toFloat()
         return if (width > height) {
             floatArrayOf(if (cardAtStart) -distance else distance, 0f)
         } else {
-            floatArrayOf(0f, if (cardAtTop) -distance else distance)
+            floatArrayOf(0f, distance)
         }
     }
 
@@ -521,16 +554,26 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
             lp.rightMargin = insets.right + margin
             card.maxHeight = height - lp.topMargin - lp.bottomMargin
         } else {
-            lp.width = (width - insets.left - insets.right - 2 * margin).coerceAtMost(ui.dp(600))
+            // A sheet along the bottom edge (on phones as wide as the screen), which also hides the
+            // space uncovered when the screenshot moves up.
+            lp.width = width.coerceAtMost(ui.dp(600))
             lp.height = LayoutParams.WRAP_CONTENT
-            lp.gravity = (if (cardAtTop) Gravity.TOP else Gravity.BOTTOM) or Gravity.CENTER_HORIZONTAL
-            lp.topMargin = insets.top + margin + if (cardAtTop) toolbarSpace else 0
-            lp.bottomMargin = insets.bottom + margin
+            lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            lp.topMargin = insets.top + margin + toolbarSpace
+            lp.bottomMargin = 0
             lp.leftMargin = 0
             lp.rightMargin = 0
-            card.maxHeight = (height * 0.5f).roundToInt()
+            card.maxHeight = (height * 0.5f).roundToInt() + insets.bottom
         }
         card.layoutParams = lp
+        // The sheet's content stays clear of the navigation bar.
+        card.setPadding(0, 0, 0, if (landscape) 0 else insets.bottom)
+        val corner = 24 * density
+        cardBackground.cornerRadii = if (landscape) {
+            FloatArray(8) { corner }
+        } else {
+            floatArrayOf(corner, corner, corner, corner, 0f, 0f, 0f, 0f)
+        }
     }
 
     private val hideStatusRunnable = Runnable { hideStatus() }
@@ -572,7 +615,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
             translationY = 0f
             return
         }
-        animate().alpha(1f).translationY(0f).setDuration(220).setInterpolator(DecelerateInterpolator()).start()
+        animate().alpha(1f).translationY(0f).setDuration(300).setInterpolator(STANDARD).start()
     }
 
     private fun View.fadeOut() {
@@ -582,7 +625,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
             visibility = GONE
             return
         }
-        animate().alpha(0f).setDuration(160).setInterpolator(AccelerateInterpolator()).withEndAction { visibility = GONE }.start()
+        animate().alpha(0f).setDuration(200).setInterpolator(STANDARD).withEndAction { visibility = GONE }.start()
     }
 
     /** A FrameLayout whose height is limited to [maxHeight]. */
@@ -611,5 +654,21 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
 
     companion object {
         private const val MAX_SCAN_CHARS = 24
+
+        /**
+         * The offset closest to [current] that puts the range [start, end] within [min, max]. If
+         * the range doesn't fit, its start is shown.
+         */
+        internal fun fit(start: Float, end: Float, min: Float, max: Float, current: Float): Float {
+            var offset = current
+            if (end + offset > max) offset = max - end
+            if (start + offset < min) offset = min - start
+            return offset
+        }
+
+        // Material motion curves.
+        private val STANDARD: Interpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
+        private val EMPHASIZED_DECELERATE: Interpolator = PathInterpolator(0.05f, 0.7f, 0.1f, 1f)
+        private val EMPHASIZED_ACCELERATE: Interpolator = PathInterpolator(0.3f, 0f, 0.8f, 0.15f)
     }
 }

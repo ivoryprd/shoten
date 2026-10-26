@@ -16,6 +16,7 @@ import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
 import io.github.ivoryprd.shoten.Prefs
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.EnumMap
+import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -67,20 +68,26 @@ class OcrEngine(private val prefs: Prefs) {
         }
     }
 
-    /** Loads the model in the background so the first real recognition is faster. */
+    /**
+     * Loads the model in the background so the first real recognition is faster. Returns at once:
+     * creating a recognizer can take a while (loading Play services' module), which would stall
+     * animations on the main thread.
+     */
     fun warmUp(script: OcrScript) {
         begin()
-        val tiny = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888)
-        try {
-            recognizer(script).process(InputImage.fromBitmap(tiny, 0)).addOnCompleteListener {
+        WARM_UP_EXECUTOR.execute {
+            val tiny = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888)
+            try {
+                recognizer(script).process(InputImage.fromBitmap(tiny, 0)).addOnCompleteListener {
+                    tiny.recycle()
+                    end()
+                }
+            } catch (e: Exception) {
+                // Only an optimization; the real recognition reports errors to the user.
+                Log.w(TAG, "OCR warm-up failed", e)
                 tiny.recycle()
                 end()
             }
-        } catch (e: Exception) {
-            // Only an optimization; the real recognition reports errors to the user.
-            Log.w(TAG, "OCR warm-up failed", e)
-            tiny.recycle()
-            end()
         }
     }
 
@@ -130,6 +137,7 @@ class OcrEngine(private val prefs: Prefs) {
 
     companion object {
         private const val TAG = "OcrEngine"
+        private val WARM_UP_EXECUTOR = Executors.newSingleThreadExecutor()
     }
 }
 

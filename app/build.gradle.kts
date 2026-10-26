@@ -19,8 +19,8 @@ android {
         applicationId = "io.github.ivoryprd.shoten"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.1.2"
+        versionCode = 4
+        versionName = "0.1.3"
 
         // Optional: build for specific ABIs only, e.g. -Pshoten.abiFilters=arm64-v8a. This mostly
         // matters for the offline flavor, whose bundled OCR library is ~11 MB per ABI.
@@ -98,7 +98,7 @@ android {
         abortOnError = true
         warningsAsErrors = false
         // The app deliberately doesn't use AndroidX to stay small, so AndroidX suggestions don't apply.
-        disable += setOf("UseKtx", "UseSwitchCompatOrMaterialCode")
+        disable += setOf("UseKtx", "UseSwitchCompatOrMaterialCode", "UseRequiresApi")
     }
 }
 
