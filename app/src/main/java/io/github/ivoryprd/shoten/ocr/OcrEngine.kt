@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import com.google.android.gms.tasks.Task
 import com.google.mlkit.common.MlKitException
 import com.google.mlkit.vision.common.InputImage
@@ -50,6 +51,7 @@ class OcrEngine(private val prefs: Prefs) {
             } else {
                 bitmap
             }
+            val start = System.nanoTime()
             val text = try {
                 recognizer(script).process(InputImage.fromBitmap(input, 0)).await()
             } catch (e: MlKitException) {
@@ -58,6 +60,7 @@ class OcrEngine(private val prefs: Prefs) {
             } finally {
                 if (input !== bitmap) input.recycle()
             }
+            Log.d(TAG, "$script OCR of ${bitmap.width}x${bitmap.height}: ${text.textBlocks.size} blocks in ${(System.nanoTime() - start) / 1_000_000} ms")
             return convert(text, bitmap.width, bitmap.height)
         } finally {
             end()
@@ -68,7 +71,14 @@ class OcrEngine(private val prefs: Prefs) {
     fun warmUp(script: OcrScript) {
         begin()
         val tiny = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888)
-        recognizer(script).process(InputImage.fromBitmap(tiny, 0)).addOnCompleteListener {
+        try {
+            recognizer(script).process(InputImage.fromBitmap(tiny, 0)).addOnCompleteListener {
+                tiny.recycle()
+                end()
+            }
+        } catch (e: Exception) {
+            // Only an optimization; the real recognition reports errors to the user.
+            Log.w(TAG, "OCR warm-up failed", e)
             tiny.recycle()
             end()
         }
@@ -116,6 +126,10 @@ class OcrEngine(private val prefs: Prefs) {
     }
 
     private fun Rect.toBox() = Box(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
+
+    companion object {
+        private const val TAG = "OcrEngine"
+    }
 }
 
 suspend fun <T> Task<T>.await(): T = suspendCancellableCoroutine { cont ->

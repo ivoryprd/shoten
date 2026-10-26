@@ -12,6 +12,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.Log
 import android.service.voice.VoiceInteractionSession
 import android.view.View
 import android.view.WindowInsets
@@ -109,8 +110,10 @@ class ShotenSession(context: Context) : VoiceInteractionSession(context), Screen
         handler.removeCallbacks(screenshotTimeout)
         val v = view ?: return
         if (screenshot == null) {
+            Log.w(TAG, "No screenshot (disabled in the assistant settings or blocked by the app)")
             showNoScreenshot()
         } else {
+            Log.d(TAG, "Screenshot ${screenshot.width}x${screenshot.height} ${screenshot.config}")
             v.showImage(screenshot, ScreenshotView.Mode.SCREEN)
         }
     }
@@ -196,6 +199,7 @@ class ShotenSession(context: Context) : VoiceInteractionSession(context), Screen
     }
 
     companion object {
+        private const val TAG = "ShotenSession"
         private const val SCREENSHOT_TIMEOUT = 2500L
         private const val EARLY_SCREENSHOT_MAX_AGE = 2000L
     }

@@ -123,10 +123,9 @@ class DictionaryRepository(private val dir: File) {
     fun install(tempFile: File, metadata: DictionaryMetadata, counts: ImportCounts, replaceId: String? = null): InstalledDictionary {
         val id = UUID.randomUUID().toString()
         val target = File(dir, "$id.db")
-        if (!tempFile.renameTo(target)) {
-            tempFile.copyTo(target, overwrite = true)
-            SQLiteDatabase.deleteDatabase(tempFile)
-        }
+        if (!tempFile.renameTo(target)) tempFile.copyTo(target, overwrite = true)
+        // Removes the temporary file if it was copied, and its leftover journal either way.
+        SQLiteDatabase.deleteDatabase(tempFile)
         val entry = InstalledDictionary(
             id = id,
             title = metadata.title,

@@ -19,8 +19,8 @@ android {
         applicationId = "io.github.ivoryprd.shoten"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
 
         // Optional: build for specific ABIs only, e.g. -Pshoten.abiFilters=arm64-v8a. This mostly
         // matters for the offline flavor, whose bundled OCR library is ~11 MB per ABI.
@@ -80,6 +80,8 @@ android {
         unitTests.isIncludeAndroidResources = true
         unitTests.all { test ->
             test.maxHeapSize = "4g"
+            // Robolectric's Android 16 runtime needs access to JDK internals.
+            test.jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED", "--add-opens=java.base/java.io=ALL-UNNAMED")
         }
     }
 

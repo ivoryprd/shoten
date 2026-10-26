@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.Log
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -236,15 +237,22 @@ class MainActivity : Activity() {
         val scripts = listOf(OcrScript.JAPANESE, OcrScript.CHINESE)
         var remaining = scripts.size
         var allAvailable = true
-        for (script in scripts) {
-            OcrModels.checkAvailable(this, app.ocr.recognizer(script)) { available ->
-                if (!available) allAvailable = false
-                if (--remaining == 0 && !isDestroyed) {
-                    card.visibility = if (allAvailable) View.GONE else View.VISIBLE
-                    status.setText(if (allAvailable) R.string.ocr_models_ready else R.string.ocr_models_missing)
-                    button.visibility = if (allAvailable) View.GONE else View.VISIBLE
+        try {
+            for (script in scripts) {
+                OcrModels.checkAvailable(this, app.ocr.recognizer(script)) { available ->
+                    if (!available) allAvailable = false
+                    if (--remaining == 0 && !isDestroyed) {
+                        card.visibility = if (allAvailable) View.GONE else View.VISIBLE
+                        status.setText(if (allAvailable) R.string.ocr_models_ready else R.string.ocr_models_missing)
+                        button.visibility = if (allAvailable) View.GONE else View.VISIBLE
+                    }
                 }
             }
+        } catch (e: Exception) {
+            // The status card is informational; never let ML Kit problems stop the app.
+            Log.e(TAG, "Cannot check the OCR models", e)
+            card.visibility = View.GONE
+            return
         }
         button.setOnClickListener { downloadOcrModels(scripts) }
     }
@@ -263,7 +271,15 @@ class MainActivity : Activity() {
                 if (!isDestroyed) updateOcrCard()
                 return
             }
-            OcrModels.install(this, app.ocr.recognizer(script), { percent ->
+            val recognizer = try {
+                app.ocr.recognizer(script)
+            } catch (e: Exception) {
+                ocrDownloading = false
+                button.isEnabled = true
+                status.text = getString(R.string.ocr_models_failed, e.message ?: e.javaClass.simpleName)
+                return
+            }
+            OcrModels.install(this, recognizer, { percent ->
                 if (!isDestroyed) status.text = getString(R.string.ocr_models_downloading, if (percent >= 0) "$percent%" else "")
             }) { ok, error ->
                 if (isDestroyed) return@install
@@ -291,5 +307,6 @@ class MainActivity : Activity() {
 
     companion object {
         const val EXTRA_QUERY = "query"
+        private const val TAG = "MainActivity"
     }
 }
