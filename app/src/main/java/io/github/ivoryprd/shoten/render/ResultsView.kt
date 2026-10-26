@@ -11,6 +11,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.text.TextUtils
 import android.text.method.LinkMovementMethod
 import android.util.TypedValue
 import android.view.Gravity
@@ -104,8 +105,11 @@ class ResultsView(context: Context) : LinearLayout(context) {
 
         for (entry in g.entries) {
             container.addView(ui.text(entry.dictionaryTitle, 11f * textScale, ui.muted).apply {
-                setPadding(0, ui.dp(10), 0, ui.dp(2))
+                setPadding(0, ui.dp(12), 0, ui.dp(2))
                 maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                isAllCaps = true
+                letterSpacing = 0.08f
             })
             entry.tags?.let { container.addView(chipLine(it).apply { textLocale = g.locale }) }
             for (block in entry.blocks) container.addView(blockView(block, g.locale))
@@ -126,7 +130,7 @@ class ResultsView(context: Context) : LinearLayout(context) {
     private fun blockView(block: GlossBlock, locale: Locale): View = when (block) {
         is GlossBlock.Text -> ui.text(block.text, 15f * textScale, ui.text).apply {
             textLocale = locale
-            setLineSpacing(ui.dp(2).toFloat(), 1f)
+            setLineSpacing(ui.dp(3).toFloat(), 1f)
             setPadding(0, ui.dp(2), 0, ui.dp(2))
             movementMethod = LinkMovementMethod.getInstance()
         }

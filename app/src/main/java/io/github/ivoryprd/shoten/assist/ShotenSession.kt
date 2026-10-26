@@ -74,6 +74,7 @@ class ShotenSession(context: Context) : VoiceInteractionSession(context), Screen
         viewUsed = true
         shown = true
         screenshotHandled = false
+        view?.onShown()
 
         // Load the OCR model while the screenshot is being taken.
         val app = ShotenApp.get(context)

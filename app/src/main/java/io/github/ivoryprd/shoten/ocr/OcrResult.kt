@@ -18,6 +18,12 @@ data class Box(val left: Float, val top: Float, val right: Float, val bottom: Fl
 
     fun union(other: Box) = Box(min(left, other.left), min(top, other.top), max(right, other.right), max(bottom, other.bottom))
 
+    /** This box limited to [other], or this box if they don't overlap. */
+    fun clampTo(other: Box): Box {
+        val clamped = Box(max(left, other.left), max(top, other.top), min(right, other.right), min(bottom, other.bottom))
+        return if (clamped.width > 0f && clamped.height > 0f) clamped else this
+    }
+
     fun distanceTo(x: Float, y: Float): Float {
         val dx = max(0f, max(left - x, x - right))
         val dy = max(0f, max(top - y, y - bottom))
@@ -28,9 +34,10 @@ data class Box(val left: Float, val top: Float, val right: Float, val bottom: Fl
 /** One recognized character (usually one code point). [box] is null for inserted spaces. */
 class OcrChar(val text: String, val box: Box?)
 
-class OcrLine(val chars: List<OcrChar>) {
+/** A line of text. [box] is the recognizer's box of the line, or else the union of its characters. */
+class OcrLine(val chars: List<OcrChar>, lineBox: Box? = null) {
     val text: String = chars.joinToString("") { it.text }
-    val box: Box? = chars.mapNotNull { it.box }.reduceOrNull { a, b -> a.union(b) }
+    val box: Box? = lineBox ?: chars.mapNotNull { it.box }.reduceOrNull { a, b -> a.union(b) }
 
     /** Whether the characters run top to bottom (vertical Japanese/Chinese text). */
     val vertical: Boolean = run {
@@ -119,27 +126,116 @@ class OcrResult(val blocks: List<OcrBlock>, val width: Int, val height: Int) {
 
     companion object {
         /**
-         * Builds a line from recognized pieces (words/elements), splitting a piece's box evenly when
-         * per-character boxes are not available, merging half-width voicing marks, and inserting
-         * spaces between Latin words.
+         * Builds a line from recognized pieces (words/elements), using per-character boxes
+         * ([symbols]) where they are plausible and else splitting a piece's box evenly, merging
+         * half-width voicing marks, and inserting spaces between Latin words. [lineBox] is the
+         * recognizer's box of the whole line, if known.
          */
-        fun buildLine(pieces: List<Pair<String, Box?>>, symbols: List<List<Pair<String, Box?>>>?): OcrLine {
+        fun buildLine(pieces: List<Pair<String, Box?>>, symbols: List<List<Pair<String, Box?>>>?, lineBox: Box? = null): OcrLine {
             val chars = ArrayList<OcrChar>()
             pieces.forEachIndexed { index, (text, box) ->
-                val pieceChars = symbols?.getOrNull(index)?.takeIf { it.isNotEmpty() && it.joinToString("") { s -> s.first } == text }
-                    ?.map { OcrChar(it.first, it.second ?: box) }
+                val pieceSymbols = symbols?.getOrNull(index)?.takeIf { it.isNotEmpty() && it.joinToString("") { s -> s.first } == text }
+                val pieceChars = box?.takeIf { Cjk.codePoints(text).any(::isFullWidthCjk) }?.let { fitCjkCells(text, it, pieceSymbols) }
+                    ?: pieceSymbols?.takeIf { plausible(it, box) }
+                        ?.map { (symbol, symbolBox) -> OcrChar(symbol, if (box != null) symbolBox?.clampTo(box) else symbolBox) }
                     ?: splitEvenly(text, box)
                 if (chars.isNotEmpty() && pieceChars.isNotEmpty()) {
                     val prev = chars.last().text.lastOrNull()
                     val next = pieceChars.first().text.firstOrNull()
-                    if (prev != null && next != null && isWordChar(prev) && isWordChar(next)) chars.add(OcrChar(" ", null))
+                    if (prev != null && next != null && isSpaced(prev) && isSpaced(next)) chars.add(OcrChar(" ", null))
                 }
                 chars.addAll(pieceChars)
             }
-            return OcrLine(normalize(chars))
+            return OcrLine(normalize(chars), lineBox)
         }
 
-        private fun isWordChar(c: Char) = c.isLetterOrDigit() && !Cjk.isJapanese(c.code) && c.code < 0x2E80
+        private fun isFullWidthCjk(cp: Int) = Cjk.isHan(cp) || cp in 0x3000..0x30FF || cp in 0x31F0..0x31FF || cp in 0xFF01..0xFF60
+
+        /**
+         * Character boxes for a piece of Chinese or Japanese text. ML Kit's boxes of CJK characters
+         * are shifted along the line by up to half a character (while the piece's box is accurate),
+         * so the characters are fitted into the piece's box instead: full-width characters take one
+         * em and half-width ones half an em, and punctuation with its ink at one side of its cell
+         * (「。) reaches past the box. ML Kit's widths tell full-width Latin characters from
+         * half-width ones (it reports both as ASCII). Returns null if the text doesn't fit.
+         */
+        private fun fitCjkCells(text: String, box: Box, symbols: List<Pair<String, Box?>>?): List<OcrChar>? {
+            val cps = Cjk.codePoints(text).map { String(Character.toChars(it)) }.toList()
+            if (cps.size < 2) return null
+            val vertical = box.height > box.width * 1.5f
+            val widths = symbols?.takeIf { it.size == cps.size }?.map { (_, b) -> b?.let { if (vertical) it.height else it.width } }
+            // ML Kit's first and last boxes are the least accurate; take the typical width from the others.
+            val typical = widths?.let { w ->
+                val middle = w.indices.filter { it != 0 && it != w.lastIndex && cps[it][0].code >= 0x80 }.mapNotNull { w[it] }.sorted()
+                middle.getOrNull(middle.size / 2)
+            }
+            val judged = BooleanArray(cps.size)
+            val weights = FloatArray(cps.size) { i ->
+                val cp = cps[i].codePointAt(0)
+                val w = widths?.getOrNull(i)
+                when {
+                    cp in 0xFF61..0xFF9F -> 0.5f
+                    cp >= 0x80 -> 1f
+                    typical != null && w != null && i != 0 && i != cps.lastIndex -> {
+                        judged[i] = true
+                        if (w < typical * 0.75f) 0.5f else 1f
+                    }
+                    Character.isLetterOrDigit(cp) -> 0.5f
+                    else -> 1f // Punctuation in CJK text is usually full width.
+                }
+            }
+            // A Latin letter or digit at either end is as wide as its neighbor in the same run.
+            for ((end, neighbor) in listOf(0 to 1, cps.lastIndex to cps.lastIndex - 1)) {
+                if (isAsciiAlphanumeric(cps[end]) && isAsciiAlphanumeric(cps[neighbor]) && judged[neighbor]) weights[end] = weights[neighbor]
+            }
+            val lead = weights.first() * leadingBlank(cps.first())
+            val trail = weights.last() * trailingBlank(cps.last())
+            val units = weights.sum() - lead - trail
+            if (units <= 0f) return null
+            val em = (if (vertical) box.height else box.width) / units
+            var position = (if (vertical) box.top else box.left) - lead * em
+            return cps.mapIndexed { i, s ->
+                val start = position
+                position += weights[i] * em
+                val cell = if (vertical) Box(box.left, start, box.right, position) else Box(start, box.top, position, box.bottom)
+                OcrChar(s, cell.clampTo(box))
+            }
+        }
+
+        private fun isAsciiAlphanumeric(s: String) = s.length == 1 && s[0].code < 0x80 && s[0].isLetterOrDigit()
+
+        /** The empty part of a character's cell before its ink, in em. */
+        private fun leadingBlank(s: String): Float = if (s in OPENING) 0.6f else 0f
+
+        /** The empty part of a character's cell after its ink, in em. */
+        private fun trailingBlank(s: String): Float = when (s) {
+            in CLOSING -> 0.65f
+            in CENTERED -> 0.3f
+            else -> 0f
+        }
+
+        private val OPENING = "「『（【〈《〔［｛〘〖([{".map { it.toString() }.toSet()
+        private val CLOSING = "。、，．」』）】〉》〕］｝〙〗.,)]}".map { it.toString() }.toSet()
+        private val CENTERED = "？！：；?!:;".map { it.toString() }.toSet()
+
+        /** Latin letters, digits and punctuation, which have spaces between words (unlike CJK text). */
+        private fun isSpaced(c: Char) = !c.isWhitespace() && !Cjk.isJapanese(c.code) && c.code < 0x2E80
+
+        /**
+         * Whether per-character boxes look right: all present and non-empty, centered inside the
+         * piece's box and in reading order. Otherwise splitting the piece's box evenly is better.
+         */
+        private fun plausible(symbols: List<Pair<String, Box?>>, piece: Box?): Boolean {
+            val boxes = symbols.map { it.second ?: return false }
+            if (boxes.any { it.width <= 0f || it.height <= 0f }) return false
+            if (piece == null) return true
+            val tolerance = min(piece.width, piece.height) * 0.25f
+            if (boxes.any { !piece.contains(it.centerX, it.centerY, tolerance) }) return false
+            val vertical = piece.height > piece.width * 1.5f
+            return boxes.zipWithNext().all { (a, b) ->
+                if (vertical) b.centerY >= a.centerY - tolerance else b.centerX >= a.centerX - tolerance
+            }
+        }
 
         private fun splitEvenly(text: String, box: Box?): List<OcrChar> {
             val cps = Cjk.codePoints(text).map { String(Character.toChars(it)) }.toList()

@@ -69,6 +69,68 @@ class OcrResultTest {
     }
 
     @Test
+    fun spacesBetweenLatinWordsAndPunctuation() {
+        fun words(vararg w: String) = OcrResult.buildLine(w.mapIndexed { i, t -> t to Box(i * 100f, 0f, i * 100f + 80f, 20f) }, null).text
+        assertEquals("to see; to look", words("to", "see;", "to", "look"))
+        assertEquals("page 10. [1]", words("page", "10.", "[1]"))
+        assertEquals("見るABC", words("見る", "ABC"))
+        assertEquals("来た!勇者", words("来た", "!", "勇者"))
+    }
+
+    @Test
+    fun implausibleSymbolBoxesAreReplaced() {
+        val piece = "日本語" to Box(0f, 0f, 60f, 20f)
+        // Out of order, and one far outside the piece.
+        val bad = listOf("日" to Box(40f, 0f, 60f, 20f), "本" to Box(0f, 0f, 20f, 20f), "語" to Box(200f, 0f, 220f, 20f))
+        val line = OcrResult.buildLine(listOf(piece), listOf(bad))
+        assertEquals(Box(0f, 0f, 20f, 20f), line.chars[0].box)
+        assertEquals(Box(40f, 0f, 60f, 20f), line.chars[2].box)
+        // Plausible symbols that stick out a little are kept, limited to the piece's box.
+        val word = "abc" to Box(0f, 0f, 30f, 20f)
+        val good = listOf("a" to Box(-2f, -1f, 11f, 21f), "b" to Box(11f, 0f, 20f, 20f), "c" to Box(20f, 0f, 31f, 20f))
+        val kept = OcrResult.buildLine(listOf(word), listOf(good))
+        assertEquals(Box(0f, 0f, 11f, 20f), kept.chars[0].box)
+        assertEquals(Box(11f, 0f, 20f, 20f), kept.chars[1].box)
+    }
+
+    @Test
+    fun fitsCjkCharactersIntoTheirBox() {
+        // ML Kit's boxes, measured on 「ここから先は危険だ。 in a 44 px font starting at x = 90: shifted to the right.
+        val symbols = listOf(
+            "「" to Box(119f, 0f, 152f, 40f), "こ" to Box(152f, 0f, 191f, 40f), "こ" to Box(191f, 0f, 238f, 40f),
+            "か" to Box(238f, 0f, 277f, 40f), "ら" to Box(277f, 0f, 320f, 40f), "先" to Box(320f, 0f, 371f, 40f),
+            "は" to Box(371f, 0f, 414f, 40f), "危" to Box(414f, 0f, 457f, 40f), "険" to Box(457f, 0f, 500f, 40f),
+            "だ" to Box(500f, 0f, 527f, 40f), "。" to Box(527f, 0f, 544f, 40f),
+        )
+        val line = OcrResult.buildLine(listOf("「ここから先は危険だ。" to Box(119f, 0f, 544f, 40f)), listOf(symbols))
+        // The real cells are 44 px wide: 先 is at 310..354.
+        val cell = line.chars[5].box!!
+        assertEquals(310f, cell.left, 3f)
+        assertEquals(354f, cell.right, 3f)
+        assertEquals(119f, line.chars[0].box!!.left, 0.01f)
+
+        // Full-width digits (reported as ASCII, but as wide as the other characters) and half-width ones.
+        fun digits(text: String, widths: List<Float>): List<Box> {
+            var x = 0f
+            val boxes = text.mapIndexed { i, c -> (c.toString() to Box(x, 0f, x + widths[i], 40f)).also { x += widths[i] } }
+            return OcrResult.buildLine(listOf(text to Box(0f, 0f, x, 40f)), listOf(boxes)).chars.map { it.box!! }
+        }
+        val full = digits("10ページ", listOf(40f, 40f, 40f, 40f, 40f))
+        assertEquals(40f, full[0].width, 0.5f)
+        val half = digits("10ページ", listOf(20f, 20f, 40f, 40f, 40f))
+        assertEquals(20f, half[0].width, 0.5f)
+        assertEquals(40f, half[2].left, 0.5f)
+    }
+
+    @Test
+    fun usesTheRecognizersLineBox() {
+        val lineBox = Box(0f, -2f, 62f, 22f)
+        val line = OcrResult.buildLine(listOf("日本語" to Box(0f, 0f, 60f, 20f)), listOf(line("日本語", 0f, 0f)), lineBox)
+        assertEquals(lineBox, line.box)
+        assertEquals(Box(0f, 0f, 60f, 20f), OcrResult.buildLine(listOf("日本語" to Box(0f, 0f, 60f, 20f)), null).box)
+    }
+
+    @Test
     fun fullTextAndEmptiness() {
         assertEquals("食べさせ\nられなかった\n\nHello world", result.fullText)
         assertFalse(result.isEmpty)

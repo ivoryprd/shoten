@@ -86,7 +86,7 @@ class ResultPresenter(private val theme: RenderTheme, private val prefs: Prefs, 
                 val info = row.dictionary.tag(name)
                 chip(tags, DictionaryDb.normalizeTagName(name), tagColor(info?.category))
             }
-            RenderedEntry(row.dictionary.title, if (tags.isEmpty()) null else tags, glossary.render(row))
+            RenderedEntry(displayTitle(row.dictionary.title), if (tags.isEmpty()) null else tags, glossary.render(row))
         }
 
         return RenderedGroup(header, subtitle, g.expression, reasons, badges(g), entries, locale)
@@ -103,6 +103,9 @@ class ResultPresenter(private val theme: RenderTheme, private val prefs: Prefs, 
         }
         return if (sb.isEmpty()) null else sb
     }
+
+    /** The title without a trailing revision, e.g. "Jitendex.org [2025-10-01]" becomes "Jitendex.org". */
+    private fun displayTitle(title: String): String = title.replace(REVISION_SUFFIX, "").ifBlank { title }
 
     private fun shortTitle(meta: TermMetaRow): String {
         val title = meta.dictionary.title
@@ -242,6 +245,7 @@ class ResultPresenter(private val theme: RenderTheme, private val prefs: Prefs, 
 
     companion object {
         private val DOWNSTEP = 0xA71C.toChar().toString()
+        private val REVISION_SUFFIX = Regex("\\s*\\[[^\\]]*]\\s*$")
         private val SMALL_KANA = "ゃゅょぁぃぅぇぉゎャュョァィゥェォヮ".toSet()
         private val TONE_COLORS = listOf(null, 0xFFE53935.toInt(), 0xFF43A047.toInt(), 0xFF1E88E5.toInt(), 0xFF8E24AA.toInt(), 0xFF757575.toInt())
         private val MARKED_TONES: Map<Char, Int> = buildMap {

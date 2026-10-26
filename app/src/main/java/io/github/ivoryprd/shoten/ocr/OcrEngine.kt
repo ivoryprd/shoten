@@ -112,11 +112,12 @@ class OcrEngine(private val prefs: Prefs) {
                 block.lines.map { line ->
                     val elements = line.elements
                     if (elements.isEmpty()) {
-                        OcrResult.buildLine(listOf(line.text to line.boundingBox?.toBox()), null)
+                        OcrResult.buildLine(listOf(line.text to line.boundingBox?.toBox()), null, line.boundingBox?.toBox())
                     } else {
                         OcrResult.buildLine(
                             elements.map { it.text to it.boundingBox?.toBox() },
                             elements.map { e -> e.symbols.map { it.text to it.boundingBox?.toBox() } },
+                            line.boundingBox?.toBox(),
                         )
                     }
                 },

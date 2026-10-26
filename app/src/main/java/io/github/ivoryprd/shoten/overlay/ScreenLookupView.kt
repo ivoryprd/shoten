@@ -1,5 +1,6 @@
 package io.github.ivoryprd.shoten.overlay
 
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -18,7 +19,10 @@ import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.View
 import android.view.WindowInsets
+import android.view.animation.AccelerateInterpolator
+import android.view.animation.DecelerateInterpolator
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -87,6 +91,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
     private var language = Language.JAPANESE
     private var scan: ScanText? = null
     private var scanStart: CharPosition? = null
+    private var cardHiding = false
     private var cardAtTop = false
     private var cardAtStart = false
     private var initialOrientation = 0
@@ -201,14 +206,18 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
 
     // --- Public API -----------------------------------------------------------------------
 
+    /** The window is being shown: the screen edge starts glowing until the screenshot arrives. */
+    fun onShown() {
+        if (!released) screenshot.startGlow()
+    }
+
     /** Shows [bitmap] and starts recognizing text in it. */
     fun showImage(bitmap: Bitmap, mode: ScreenshotView.Mode) {
         if (released) return
         initialOrientation = resources.configuration.orientation
         screenshot.showBoxes = app.prefs.showTextBoxes
         screenshot.setImage(bitmap, mode)
-        screenshot.dimmed = true
-        toolbar.visibility = VISIBLE
+        toolbar.fadeIn(-ui.dp(8).toFloat())
         hideCard()
         ocrResults.clear()
         language = initialLanguage()
@@ -218,8 +227,9 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
     /** Shows an error instead of a screenshot (e.g. screenshots are disabled). */
     fun showError(message: CharSequence, actionLabel: CharSequence?, action: (() -> Unit)?) {
         if (released) return
+        screenshot.stopScanning()
         setBackgroundColor(Color.argb(140, 0, 0, 0))
-        toolbar.visibility = VISIBLE
+        toolbar.fadeIn(-ui.dp(8).toFloat())
         languageChip.visibility = GONE
         showStatus(message, actionLabel, action = action)
     }
@@ -227,7 +237,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
     /** Returns true if the back press was handled. */
     fun onBackPressed(): Boolean {
         if (lookups.back()) return true
-        if (card.visibility == VISIBLE) {
+        if (isCardShown) {
             hideCard()
             return true
         }
@@ -240,7 +250,6 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         ocrJob?.cancel()
         scope.cancel()
         screenshot.setImage(null, ScreenshotView.Mode.SCREEN)
-        screenshot.ocr = null
     }
 
     // --- OCR --------------------------------------------------------------------------------
@@ -270,6 +279,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
             return
         }
         showStatus(context.getString(R.string.status_reading))
+        screenshot.startScanning()
         ocrJob?.cancel()
         ocrJob = scope.launch {
             val result = try {
@@ -280,6 +290,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
                 onModelMissing(script)
                 return@launch
             } catch (e: Exception) {
+                screenshot.stopScanning()
                 showStatus(context.getString(R.string.status_ocr_failed, e.message ?: e.javaClass.simpleName))
                 return@launch
             }
@@ -300,6 +311,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
 
     private fun onModelMissing(script: OcrScript) {
         if (!OcrModels.DOWNLOADED_BY_PLAY_SERVICES) {
+            screenshot.stopScanning()
             showStatus(context.getString(R.string.status_ocr_failed, "model unavailable"))
             return
         }
@@ -313,14 +325,14 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
             if (ok) {
                 runOcr(firstPass = false)
             } else {
+                screenshot.stopScanning()
                 showStatus(context.getString(R.string.status_model_failed, error ?: ""))
             }
         }
     }
 
     private fun onOcrResult(result: OcrResult) {
-        screenshot.ocr = result
-        screenshot.dimmed = true
+        screenshot.showResult(result)
         when {
             result.isEmpty -> showStatus(context.getString(R.string.status_no_text), context.getString(R.string.action_switch_language)) { switchLanguage() }
             !app.dictionaries.hasDictionaries(language) -> showStatus(
@@ -373,7 +385,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
     }
 
     override fun onEmptyTap() {
-        if (card.visibility == VISIBLE) {
+        if (isCardShown) {
             hideCard()
         } else {
             host.dismiss()
@@ -401,16 +413,70 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         showCard()
     }
 
+    private val isCardShown get() = card.visibility == VISIBLE && !cardHiding
+
     private fun showCard() {
         scroll.scrollTo(0, 0)
+        val appearing = !isCardShown
         card.visibility = VISIBLE
         layoutChrome()
+        if (!appearing) return
+        // Slide in from the edge of the screen the card is placed at.
+        card.animate().cancel()
+        cardHiding = false
+        if (!ValueAnimator.areAnimatorsEnabled()) {
+            resetCardTransform()
+            return
+        }
+        val offset = cardOffset()
+        if (card.alpha == 1f) {
+            card.alpha = 0f
+            card.translationX = offset[0]
+            card.translationY = offset[1]
+            card.scaleX = 0.96f
+            card.scaleY = 0.96f
+        }
+        card.animate().alpha(1f).translationX(0f).translationY(0f).scaleX(1f).scaleY(1f)
+            .setDuration(260).setInterpolator(DecelerateInterpolator(2f)).start()
     }
 
     private fun hideCard() {
         lookups.cancel()
-        card.visibility = GONE
         screenshot.setSelection(emptyList())
+        if (!isCardShown) return
+        card.animate().cancel()
+        if (!ValueAnimator.areAnimatorsEnabled()) {
+            card.visibility = GONE
+            return
+        }
+        cardHiding = true
+        val offset = cardOffset()
+        card.animate().alpha(0f).translationX(offset[0] / 2).translationY(offset[1] / 2).scaleX(0.98f).scaleY(0.98f)
+            .setDuration(160).setInterpolator(AccelerateInterpolator())
+            .withEndAction {
+                cardHiding = false
+                card.visibility = GONE
+                resetCardTransform()
+            }
+            .start()
+    }
+
+    /** The direction the card comes from: the screen edge it is placed at. */
+    private fun cardOffset(): FloatArray {
+        val distance = ui.dp(32).toFloat()
+        return if (width > height) {
+            floatArrayOf(if (cardAtStart) -distance else distance, 0f)
+        } else {
+            floatArrayOf(0f, if (cardAtTop) -distance else distance)
+        }
+    }
+
+    private fun resetCardTransform() {
+        card.alpha = 1f
+        card.translationX = 0f
+        card.translationY = 0f
+        card.scaleX = 1f
+        card.scaleY = 1f
     }
 
     // --- Layout -----------------------------------------------------------------------------
@@ -484,13 +550,39 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         } else {
             statusAction.visibility = GONE
         }
-        statusBox.visibility = VISIBLE
+        statusBox.fadeIn(ui.dp(8).toFloat())
         if (autoHide) postDelayed(hideStatusRunnable, 2500)
     }
 
     private fun hideStatus() {
         removeCallbacks(hideStatusRunnable)
-        statusBox.visibility = GONE
+        statusBox.fadeOut()
+    }
+
+    /** Shows the view, fading it in and moving it by [fromY] into place. */
+    private fun View.fadeIn(fromY: Float) {
+        animate().cancel()
+        if (visibility != VISIBLE) {
+            alpha = 0f
+            translationY = fromY
+            visibility = VISIBLE
+        }
+        if (!ValueAnimator.areAnimatorsEnabled()) {
+            alpha = 1f
+            translationY = 0f
+            return
+        }
+        animate().alpha(1f).translationY(0f).setDuration(220).setInterpolator(DecelerateInterpolator()).start()
+    }
+
+    private fun View.fadeOut() {
+        if (visibility != VISIBLE) return
+        animate().cancel()
+        if (!ValueAnimator.areAnimatorsEnabled()) {
+            visibility = GONE
+            return
+        }
+        animate().alpha(0f).setDuration(160).setInterpolator(AccelerateInterpolator()).withEndAction { visibility = GONE }.start()
     }
 
     /** A FrameLayout whose height is limited to [maxHeight]. */
