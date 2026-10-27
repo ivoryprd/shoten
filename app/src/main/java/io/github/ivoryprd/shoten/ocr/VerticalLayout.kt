@@ -22,9 +22,48 @@ internal object VerticalLayout {
      * A column of vertical text: its ink, the boxes of its characters' cells (top to bottom), the
      * background color, and the cells (by index) that hold nothing but a mark whose vertical
      * form differs from the horizontal one: 、 and 。 (in the upper right of their cells instead
-     * of the lower left) and the long vowel mark ー (turned a quarter, a vertical bar).
+     * of the lower left) and the long vowel mark ー (turned a quarter, a vertical bar). [inks] are
+     * the boxes of the ink in each cell (null for none), which tell small kana from others.
      */
-    class Column(val box: Box, val cells: List<Box>, val background: Int, val marks: Map<Int, String> = emptyMap())
+    class Column(
+        val box: Box,
+        val cells: List<Box>,
+        val background: Int,
+        val marks: Map<Int, String> = emptyMap(),
+        val contrast: Contrast = Contrast.DEFAULT,
+        val inks: List<Box?> = emptyList(),
+    )
+
+    /**
+     * How much the ink of a column stands out from its background in brightness: at least
+     * [threshold] (screentone and other faint patterns stay below it), [strong] for its strongest
+     * strokes.
+     */
+    class Contrast(val threshold: Int, val strong: Int) {
+        companion object {
+            val DEFAULT = Contrast(48, 255)
+        }
+    }
+
+    /**
+     * [pixels] (ARGB) in gray, with what doesn't stand out as ink evened out into the
+     * [background]: screentone and textures around text vanish, which the recognizer otherwise
+     * takes for parts of characters. Ink keeps its brightness (text outlined in another color
+     * stays readable); between faint and strong, it fades into the background.
+     */
+    fun clean(pixels: IntArray, background: Int, contrast: Contrast): IntArray {
+        val bg = luminance(background)
+        val from = 0.8f * contrast.threshold
+        val to = max(from + 1f, (contrast.threshold + contrast.strong) / 2f)
+        return IntArray(pixels.size) { i ->
+            val d = luminance(pixels[i]) - bg
+            val weight = ((abs(d) - from) / (to - from)).coerceIn(0f, 1f)
+            val l = (bg + d * weight).roundToInt().coerceIn(0, 255)
+            (0xFF shl 24) or (l shl 16) or (l shl 8) or l
+        }
+    }
+
+    private fun luminance(p: Int) = (299 * ((p shr 16) and 0xFF) + 587 * ((p shr 8) and 0xFF) + 114 * (p and 0xFF)) / 1000
 
     /** Where to look for vertical text, and the size of its characters (an em). */
     class Region(val left: Int, val top: Int, val right: Int, val bottom: Int, val em: Float) {
@@ -142,13 +181,16 @@ internal object VerticalLayout {
                 mainWidth = group.last().width
             }
             group.forEachIndexed { i, c ->
-                val tops = cellTops(c.rows, pitch, phases[i])
+                val tops = if (furigana) furiganaCellTops(c, pitch) else cellTops(c.rows, pitch, phases[i])
                 // A single character (but furigana) is left to the recognizer: it could as well
                 // be a piece of horizontal text.
                 if (tops.isEmpty() || tops.size == 1 && !furigana) return@forEachIndexed
                 val marks = HashMap<Int, String>()
-                tops.forEachIndexed { k, y ->
-                    markIn(ink.mask, w, h, (c.x0 + c.x1) / 2f - pitch / 2, c.y0 + y, pitch)?.let { marks[k] = it }
+                val inks = tops.mapIndexed { k, y ->
+                    val left = (c.x0 + c.x1) / 2f - pitch / 2
+                    inkBox(ink.mask, w, h, left, c.y0 + y, pitch)?.also { box ->
+                        markIn(ink.mask, w, h, left, c.y0 + y, pitch, box)?.let { marks[k] = it }
+                    }
                 }
                 if (!looksLikeText(c, tops, pitch, marks.size)) return@forEachIndexed
                 val cx = region.left + (c.x0 + c.x1) / 2f
@@ -158,6 +200,8 @@ internal object VerticalLayout {
                     tops.map { y -> Box(cx - pitch / 2, top + y, cx + pitch / 2, top + y + pitch) },
                     ink.background,
                     marks,
+                    ink.contrast,
+                    inks.map { b -> b?.let { Box(region.left + it.left, region.top + it.top, region.left + it.right, region.top + it.bottom) } },
                 )
             }
         }
@@ -256,11 +300,33 @@ internal object VerticalLayout {
                 marked += chars.size
                 chars += OcrChar(mark, column.cells[k])
             } else {
-                chars += inCell
+                val ink = column.inks.getOrNull(k)
+                chars += if (ink == null) inCell else inCell.map { sized(it, column.cells[k], ink) }
             }
         }
         return fixVerticalForms(chars, keep = marked)
     }
+
+    /**
+     * [c] as a small or a full-size kana, as the [ink] in its [cell] tells: vertical text sets
+     * small kana in the upper right of their cells, and on a sheet the recognizer often reads them
+     * as full-size ones (or the other way round).
+     */
+    private fun sized(c: OcrChar, cell: Box, ink: Box): OcrChar {
+        val extent = max(ink.width, ink.height) / cell.width
+        val right = (ink.centerX - cell.left) / cell.width
+        val up = (ink.centerY - cell.top) / cell.height
+        val fixed = when {
+            extent <= 0.62f && right >= 0.55f && up <= 0.45f -> SMALL_KANA[c.text]
+            extent >= 0.72f -> FULL_KANA[c.text]
+            else -> null
+        }
+        return if (fixed == null) c else OcrChar(fixed, c.box)
+    }
+
+    private val SMALL_KANA = ("あぁいぃうぅえぇおぉつっやゃゆゅよょわゎアァイィウゥエェオォツッヤャユュヨョワヮカヵケヶ")
+        .chunked(2).associate { it.substring(0, 1) to it.substring(1) }
+    private val FULL_KANA = SMALL_KANA.entries.associate { (full, small) -> small to full }
 
     /**
      * What the marks may be read as. Marks read as other marks are left as read: the recognizer
@@ -280,14 +346,10 @@ internal object VerticalLayout {
     private val OPENING = setOf("J", "ㄱ", "┐", "¬")
     private val CLOSING = setOf("r", "L", "└")
 
-    private class Ink(val mask: BooleanArray, val background: Int)
+    private class Ink(val mask: BooleanArray, val background: Int, val contrast: Contrast)
 
-    /**
-     * The mark in the cell of [size] at ([left], [top]) of a column if that is all the cell holds
-     * (see [Column.marks]): 、 or 。 in the upper right (。 is told from 、 by its hole), or a long
-     * vowel mark, an unbroken thin bar down the middle (unlike ！ or ︙, which are broken).
-     */
-    private fun markIn(mask: BooleanArray, w: Int, h: Int, left: Float, top: Float, size: Float): String? {
+    /** The box of the ink in the cell of [size] at ([left], [top]) of the [mask], or null if it has none. */
+    private fun inkBox(mask: BooleanArray, w: Int, h: Int, left: Float, top: Float, size: Float): Box? {
         val x0 = left.roundToInt().coerceIn(0, w)
         val x1 = (left + size).roundToInt().coerceIn(0, w)
         val y0 = top.roundToInt().coerceIn(0, h)
@@ -302,12 +364,26 @@ internal object VerticalLayout {
             maxX = max(maxX, x)
             maxY = max(maxY, y)
         }
-        if (maxX < 0) return null
+        return if (maxX < 0) null else Box(minX.toFloat(), minY.toFloat(), maxX + 1f, maxY + 1f)
+    }
+
+    /**
+     * The mark in the cell of [size] at ([left], [top]) of a column if that is all the cell holds
+     * (see [Column.marks]), given the [box] of its ink: 、 or 。 in the upper right (。 is told
+     * from 、 by its hole), or a long vowel mark, an unbroken thin bar down the middle (unlike ！
+     * or ︙, which are broken).
+     */
+    private fun markIn(mask: BooleanArray, w: Int, h: Int, left: Float, top: Float, size: Float, box: Box): String? {
+        val minX = box.left.toInt()
+        val minY = box.top.toInt()
+        val maxX = box.right.toInt() - 1
+        val maxY = box.bottom.toInt() - 1
         val width = maxX - minX + 1
         val height = maxY - minY + 1
-        // About as wide as high, in the upper right, and more than a speck.
-        if (minX >= left + 0.45f * size && maxY <= top + 0.55f * size && max(width, height) >= 0.12f * size &&
-            max(width, height) <= 2 * min(width, height) + 1
+        // About as wide as high, in the upper right (but clear of the top: ink there is the end of
+        // the character above, cut off), and more than a speck.
+        if (minX >= left + 0.45f * size && maxY <= top + 0.55f * size && minY >= top + max(2f, 0.03f * size) &&
+            max(width, height) >= 0.12f * size && max(width, height) <= 2 * min(width, height) + 1
         ) {
             return if (hasHole(mask, w, h, minX, minY, maxX, maxY)) "。" else "、"
         }
@@ -369,7 +445,7 @@ internal object VerticalLayout {
         val histogram = IntArray(64)
         for (i in 0 until n) {
             val p = pixels[i]
-            val l = (299 * ((p shr 16) and 0xFF) + 587 * ((p shr 8) and 0xFF) + 114 * (p and 0xFF)) / 1000
+            val l = luminance(p)
             lum[i] = l
             histogram[l shr 2]++
         }
@@ -401,7 +477,7 @@ internal object VerticalLayout {
             k++
         }
         val color = if (k == 0) -1 else (0xFF shl 24) or ((r / k).toInt() shl 16) or ((g / k).toInt() shl 8) or (b / k).toInt()
-        return Ink(mask, color)
+        return Ink(mask, color, Contrast(threshold, strong))
     }
 
     /** Index ranges [start, end) where [value] is at least [min]. */
@@ -604,6 +680,63 @@ internal object VerticalLayout {
             }
         }
         return best
+    }
+
+    /**
+     * The tops of the cells of a column of furigana. Furigana isn't set on one grid: the reading
+     * of each word (or character) is centered on it, which leaves gaps of any size between them.
+     * So cells of [pitch] are placed one after another where they fit the ink best: their edges
+     * in gaps between characters, their characters in their middles. Empty rows between cells are
+     * skipped.
+     */
+    private fun furiganaCellTops(c: RawColumn, pitch: Float): List<Float> {
+        val p = pitch.roundToInt().coerceAtLeast(2)
+        // Rows of the column with room around it for cells reaching past its ink.
+        val pad = p
+        val n = c.rows.size + 2 * pad
+        fun ink(y: Int) = if (y - pad in c.rows.indices) c.rows[y - pad] else 0
+        fun near(y: Int) = if (y - pad in c.rows.indices) c.near[y - pad] else 0f
+        val empty = max(0, (c.rows.maxOrNull() ?: 0) / 20)
+        // Running sums of the ink and of the ink times its row, for where the ink of a cell is centered.
+        val sum = LongArray(n + 1)
+        val moment = LongArray(n + 1)
+        for (y in 0 until n) {
+            sum[y + 1] = sum[y] + ink(y)
+            moment[y + 1] = moment[y] + ink(y).toLong() * y
+        }
+        // The best cells for the rows up to each row: their cost, and where the last step started.
+        val cost = FloatArray(n + 1) { Float.MAX_VALUE }
+        val from = IntArray(n + 1) { -1 }
+        val cellEnds = BooleanArray(n + 1)
+        cost[0] = 0f
+        for (y in 0 until n) {
+            val base = cost[y]
+            if (base == Float.MAX_VALUE) continue
+            if (ink(y) <= empty && base < cost[y + 1]) {
+                cost[y + 1] = base
+                from[y + 1] = y
+                cellEnds[y + 1] = false
+            }
+            val end = y + p
+            val inCell = if (end <= n) sum[end] - sum[y] else 0L
+            if (inCell > 0) {
+                val center = (moment[end] - moment[y]).toFloat() / inCell + 0.5f
+                val total = base + near(y) + near(end - 1) + 0.5f * abs(center - (y + p / 2f)) / p
+                if (total < cost[end]) {
+                    cost[end] = total
+                    from[end] = y
+                    cellEnds[end] = true
+                }
+            }
+        }
+        if (cost[n] == Float.MAX_VALUE) return emptyList()
+        val tops = ArrayList<Float>()
+        var y = n
+        while (y > 0) {
+            if (cellEnds[y]) tops += (from[y] - pad).toFloat()
+            y = from[y]
+        }
+        return tops.reversed()
     }
 
     /** The tops of the cells covering a column's ink, without empty cells at its ends. */

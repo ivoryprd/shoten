@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
+import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
@@ -81,51 +82,80 @@ internal class VerticalSheet private constructor(val bitmap: Bitmap, private val
             return chars.mapValues { (column, read) -> VerticalLayout.readColumn(column, read) }
         }
 
-        /** Lays out [rows] (at most [ROWS], of at most [ROW_CELLS] cells) of [image] on a sheet. */
+        /**
+         * Lays out [rows] (at most [ROWS], of at most [ROW_CELLS] cells) of [image] on a sheet, in
+         * gray with what isn't ink cleaned away ([VerticalLayout.clean]).
+         */
         fun create(image: Bitmap, rows: List<Row>): VerticalSheet {
             val longest = rows.maxOf { it.size }
             val bitmap = Bitmap.createBitmap(2 * PAD + longest * CELL, 2 * PAD + (rows.size - 1) * ROW_PITCH + CELL, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)
-            canvas.drawColor(rows.groupingBy { it.column.background }.eachCount().maxBy { it.value }.key)
+            canvas.drawColor(gray(rows.groupingBy { it.column.background }.eachCount().maxBy { it.value }.key))
             val fill = Paint()
             val paint = Paint(Paint.FILTER_BITMAP_FLAG)
             val src = Rect()
             val dst = RectF()
-            rows.forEachIndexed { r, row ->
-                val top = PAD + r * ROW_PITCH
-                // Each row on the background of its own column.
-                fill.color = row.column.background
-                canvas.drawRect(0f, top - CELL / 2f, bitmap.width.toFloat(), top + CELL * 1.5f, fill)
-                for (k in 0 until row.size) {
-                    val cell = row.column.cells[row.from + k]
-                    val scale = CELL / max(1f, cell.width)
-                    // Marks are drawn as in horizontal text: 、 and 。 from the upper right of the cell to
-                    // the lower left, ー turned back a quarter.
-                    val mark = row.column.marks[row.from + k]
-                    val moved = mark == "。" || mark == "、"
-                    val part = if (moved) Box(cell.centerX, cell.top, cell.right, cell.centerY) else cell
-                    src.set(
-                        part.left.toInt().coerceIn(0, image.width), part.top.toInt().coerceIn(0, image.height),
-                        part.right.toInt().coerceIn(0, image.width), part.bottom.toInt().coerceIn(0, image.height),
-                    )
-                    if (src.isEmpty) continue
-                    val left = PAD + k * CELL
-                    val y = top + if (moved) CELL / 2f else 0f
-                    dst.set(
-                        left + (src.left - part.left) * scale, y + (src.top - part.top) * scale,
-                        left + (src.right - part.left) * scale, y + (src.bottom - part.top) * scale,
-                    )
-                    if (mark == "ー") {
-                        canvas.save()
-                        canvas.rotate(-90f, left + CELL / 2f, top + CELL / 2f)
-                        canvas.drawBitmap(image, src, dst, paint)
-                        canvas.restore()
-                    } else {
-                        canvas.drawBitmap(image, src, dst, paint)
+            // Each column's cells, cut out of the image and cleaned once (a long column takes several rows).
+            val cleaned = HashMap<VerticalLayout.Column, Pair<Bitmap, Rect>?>()
+            try {
+                rows.forEachIndexed { r, row ->
+                    val top = PAD + r * ROW_PITCH
+                    // Each row on the background of its own column.
+                    fill.color = gray(row.column.background)
+                    canvas.drawRect(0f, top - CELL / 2f, bitmap.width.toFloat(), top + CELL * 1.5f, fill)
+                    val (source, area) = cleaned.getOrPut(row.column) { cleanedCells(image, row.column) } ?: return@forEachIndexed
+                    for (k in 0 until row.size) {
+                        val cell = row.column.cells[row.from + k]
+                        val scale = CELL / max(1f, cell.width)
+                        // Marks are drawn as in horizontal text: 、 and 。 from the upper right of the cell to
+                        // the lower left, ー turned back a quarter.
+                        val mark = row.column.marks[row.from + k]
+                        val moved = mark == "。" || mark == "、"
+                        val part = if (moved) Box(cell.centerX, cell.top, cell.right, cell.centerY) else cell
+                        src.set(
+                            part.left.toInt().coerceIn(area.left, area.right), part.top.toInt().coerceIn(area.top, area.bottom),
+                            part.right.toInt().coerceIn(area.left, area.right), part.bottom.toInt().coerceIn(area.top, area.bottom),
+                        )
+                        if (src.isEmpty) continue
+                        val left = PAD + k * CELL
+                        val y = top + if (moved) CELL / 2f else 0f
+                        dst.set(
+                            left + (src.left - part.left) * scale, y + (src.top - part.top) * scale,
+                            left + (src.right - part.left) * scale, y + (src.bottom - part.top) * scale,
+                        )
+                        src.offset(-area.left, -area.top)
+                        if (mark == "ー") {
+                            canvas.save()
+                            canvas.rotate(-90f, left + CELL / 2f, top + CELL / 2f)
+                            canvas.drawBitmap(source, src, dst, paint)
+                            canvas.restore()
+                        } else {
+                            canvas.drawBitmap(source, src, dst, paint)
+                        }
                     }
                 }
+            } finally {
+                for (entry in cleaned.values) entry?.first?.recycle()
             }
             return VerticalSheet(bitmap, rows)
         }
+
+        /** The part of [image] that [column]'s cells cover, cleaned, and where it is in the image. */
+        private fun cleanedCells(image: Bitmap, column: VerticalLayout.Column): Pair<Bitmap, Rect>? {
+            val area = Rect(
+                floor(column.cells.minOf { it.left }).toInt().coerceIn(0, image.width),
+                floor(column.cells.first().top).toInt().coerceIn(0, image.height),
+                ceil(column.cells.maxOf { it.right }).toInt().coerceIn(0, image.width),
+                ceil(column.cells.last().bottom).toInt().coerceIn(0, image.height),
+            )
+            if (area.isEmpty) return null
+            val pixels = IntArray(area.width() * area.height())
+            image.getPixels(pixels, 0, area.width(), area.left, area.top, area.width(), area.height())
+            val clean = VerticalLayout.clean(pixels, column.background, column.contrast)
+            return Bitmap.createBitmap(clean, area.width(), area.height(), Bitmap.Config.ARGB_8888) to area
+        }
+
+        /** [color] in gray, as cleaned cells are. */
+        private fun gray(color: Int) = VerticalLayout.clean(intArrayOf(color), color, VerticalLayout.Contrast.DEFAULT)[0]
     }
 }

@@ -136,4 +136,31 @@ class OcrResultTest {
         assertFalse(result.isEmpty)
         assertTrue(OcrResult(emptyList(), 1, 1).isEmpty)
     }
+
+    @Test
+    fun correctingCharacters() {
+        val corrected = result.withChar(CharPosition(0, 0, 1), "ベ")
+        assertEquals("食ベさせ", corrected.blocks[0].lines[0].text)
+        // The box stays; the rest of the result too.
+        assertEquals(result.charAt(CharPosition(0, 0, 1))?.box, corrected.charAt(CharPosition(0, 0, 1))?.box)
+        assertEquals(result.blocks[0].lines[1].text, corrected.blocks[0].lines[1].text)
+        assertEquals("食ベさせられなかった", corrected.scanText(CharPosition(0, 0, 0), 24).text)
+        // Deleting.
+        val deleted = result.withChar(CharPosition(0, 1, 0), null)
+        assertEquals("れなかった", deleted.blocks[0].lines[1].text)
+        assertEquals("せれなかった", deleted.scanText(CharPosition(0, 0, 3), 24).text)
+        // Positions that don't exist change nothing.
+        assertEquals(result.fullText, result.withChar(CharPosition(5, 0, 0), "x").fullText)
+        assertEquals(result.fullText, result.withChar(CharPosition(0, 0, 9), "x").fullText)
+    }
+
+    @Test
+    fun correctedColumnsStayVertical() {
+        // A column of two characters, corrected down to one (a single character's box doesn't tell).
+        val column = OcrLine(listOf(OcrChar("今", Box(0f, 0f, 20f, 20f)), OcrChar("日", Box(0f, 20f, 20f, 40f))))
+        assertTrue(column.vertical)
+        val corrected = OcrResult(listOf(OcrBlock(listOf(column))), 100, 100).withChar(CharPosition(0, 0, 1), null)
+        assertTrue(corrected.blocks[0].lines[0].vertical)
+        assertEquals("今", corrected.blocks[0].lines[0].text)
+    }
 }

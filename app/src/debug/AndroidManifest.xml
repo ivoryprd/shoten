@@ -11,6 +11,7 @@
                 <action android:name="io.github.ivoryprd.shoten.debug.SHOW_SCREEN_LOOKUP" />
                 <action android:name="io.github.ivoryprd.shoten.debug.IMPORT_DICTIONARY" />
                 <action android:name="io.github.ivoryprd.shoten.debug.OCR_FILE" />
+                <action android:name="io.github.ivoryprd.shoten.debug.SUGGEST" />
                 <action android:name="io.github.ivoryprd.shoten.debug.SNAPSHOT" />
             </intent-filter>
         </receiver>

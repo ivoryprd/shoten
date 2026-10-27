@@ -20,6 +20,7 @@ import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
 import android.view.animation.Interpolator
@@ -37,6 +38,7 @@ import io.github.ivoryprd.shoten.ShotenApp
 import io.github.ivoryprd.shoten.lookup.Language
 import io.github.ivoryprd.shoten.lookup.LookupResult
 import io.github.ivoryprd.shoten.ocr.CharPosition
+import io.github.ivoryprd.shoten.ocr.CharSuggestions
 import io.github.ivoryprd.shoten.ocr.OcrModelUnavailableException
 import io.github.ivoryprd.shoten.ocr.OcrModels
 import io.github.ivoryprd.shoten.ocr.OcrResult
@@ -52,6 +54,7 @@ import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
@@ -75,8 +78,10 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
     private val resultsView = ResultsView(context)
     private val scroll = ScrollView(context)
     private val card = BoundedFrameLayout(context)
-    private val cardHeader = TextView(context)
+    private val cardHeader = TouchTextView(context)
     private val backButton: ImageView
+    private val editButton: ImageView
+    private val correctionPanel: CorrectionPanel
     private val toolbar = LinearLayout(context)
     private val languageChip = TextView(context)
     private val verticalChip = TextView(context)
@@ -101,6 +106,10 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
     private val cardBackground = GradientDrawable().apply { setColor(context.getColor(R.color.surface)) }
     private var initialOrientation = 0
     private var released = false
+    private var suggestJob: Job? = null
+    /** The screenshot in a bitmap whose pixels can be read (for suggestions), once needed. */
+    private var readableImage: Bitmap? = null
+    private val readableLock = Any()
 
     init {
         clipChildren = false
@@ -128,7 +137,26 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
             setPadding(ui.dp(12), ui.dp(8), 0, ui.dp(4))
         }
         headerRow.addView(cardHeader, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        // Tapping a character of the text, or the edit button, corrects it.
+        cardHeader.setOnClickListener {
+            val s = scan ?: return@setOnClickListener
+            if (editButton.visibility != VISIBLE) return@setOnClickListener
+            val offset = cardHeader.getOffsetForPosition(cardHeader.touchX, cardHeader.touchY)
+            openCorrection(s.offsets.indexOfLast { it <= offset }.coerceAtLeast(0))
+        }
+        editButton = ui.iconButton(R.drawable.ic_edit, context.getString(R.string.action_correct_text)) {
+            if (correctionPanel.visibility == VISIBLE) closeCorrection() else openCorrection(0)
+        }
+        editButton.visibility = GONE
+        headerRow.addView(editButton)
         cardContent.addView(headerRow)
+        correctionPanel = CorrectionPanel(context, ui, object : CorrectionPanel.Listener {
+            override fun onCharSelected(index: Int) = showCorrection(index)
+            override fun onCorrect(index: Int, replacement: String?) = correct(index, replacement)
+            override fun onDone() = closeCorrection()
+        })
+        correctionPanel.visibility = GONE
+        cardContent.addView(correctionPanel)
         scroll.isFillViewport = false
         scroll.addView(resultsView)
         cardContent.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
@@ -234,6 +262,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         screenshot.setImage(bitmap, mode)
         toolbar.fadeIn(-ui.dp(8).toFloat())
         hideCard()
+        synchronized(readableLock) { readableImage = null }
         ocrResults.clear()
         language = initialLanguage()
         vertical = app.prefs.verticalText
@@ -267,6 +296,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         lookups.cancel()
         ocrJob?.cancel()
         scope.cancel()
+        synchronized(readableLock) { readableImage = null }
         screenshot.setImage(null, ScreenshotView.Mode.SCREEN)
     }
 
@@ -414,6 +444,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         if (initial && width > height) cardAtStart = x > width / 2f
         val text = result.scanText(position, MAX_SCAN_CHARS)
         if (text.text.isBlank()) return
+        closeCorrection()
         scan = text
         scanStart = position
         screenshot.setSelection(listOf(position))
@@ -431,6 +462,9 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
 
     private fun onLookupResult(result: LookupResult, nested: Boolean) {
         backButton.visibility = if (lookups.canGoBack) VISIBLE else GONE
+        // Only the text read from the screen can be corrected, not a link's.
+        editButton.visibility = if (nested) GONE else VISIBLE
+        if (nested) closeCorrection()
         val header = SpannableStringBuilder()
         if (nested) {
             header.append(result.text)
@@ -509,6 +543,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
 
     private fun hideCard() {
         lookups.cancel()
+        closeCorrection()
         screenshot.setSelection(emptyList())
         screenshot.panTo(0f, 0f)
         if (!isCardShown) return
@@ -545,6 +580,85 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         card.translationY = 0f
         card.scaleX = 1f
         card.scaleY = 1f
+    }
+
+    // --- Correction -------------------------------------------------------------------------
+
+    /** Opens the correction panel with the character at [index] of the scanned text selected. */
+    private fun openCorrection(index: Int) {
+        if (scan == null) return
+        correctionPanel.visibility = VISIBLE
+        showCorrection(index)
+    }
+
+    private fun closeCorrection() {
+        suggestJob?.cancel()
+        correctionPanel.visibility = GONE
+    }
+
+    /** Shows the scanned text in the panel, the character at [index] selected, and what it may be. */
+    private fun showCorrection(index: Int) {
+        val s = scan ?: return closeCorrection()
+        val result = screenshot.ocr ?: return closeCorrection()
+        val count = min(s.positions.size, CORRECTION_CHARS)
+        if (count == 0) return closeCorrection()
+        val selected = index.coerceIn(0, count - 1)
+        correctionPanel.setText((0 until count).map { result.charAt(s.positions[it])?.text.orEmpty() }, selected)
+        val char = result.charAt(s.positions[selected]) ?: return
+        val language = language
+        suggestJob?.cancel()
+        suggestJob = scope.launch {
+            val suggestions = withContext(Dispatchers.Default) {
+                val cell = char.box?.let { box -> readable()?.let { CharSuggestions.cellOf(it, box) } }
+                app.charSuggestions.suggest(char.text, cell, language)
+            }
+            val ranked = withContext(app.lookupDispatcher) { byWords(s, selected, char.text, suggestions, language) }
+            correctionPanel.setSuggestions(ranked)
+        }
+    }
+
+    /**
+     * [suggestions] for the character at [index] of [s], those that make the text read as a
+     * longer dictionary word through it first (末来 corrected to 未来, say).
+     */
+    private fun byWords(s: ScanText, index: Int, old: String, suggestions: List<String>, language: Language): List<CorrectionPanel.Suggestion> {
+        val offset = s.offsets[index]
+        if (offset + old.length > s.text.length) return suggestions.map { CorrectionPanel.Suggestion(it, false) }
+        val before = app.lookupEngine.lookup(s.text, language, maxGroups = 1).matchLength
+        return suggestions.mapIndexed { i, c ->
+            val makesWord = i < WORD_CHECKS && app.lookupEngine.lookup(s.text.substring(0, offset) + c + s.text.substring(offset + old.length), language, maxGroups = 1)
+                .matchLength.let { it > offset + c.length - 1 && it > before && it > c.length }
+            CorrectionPanel.Suggestion(c, makesWord)
+        }.sortedBy { !it.makesWord }
+    }
+
+    /** Puts [replacement] in place of the character at [index] of the scanned text (null deletes it), and looks it up again. */
+    private fun correct(index: Int, replacement: String?) {
+        val s = scan ?: return
+        val start = scanStart ?: return
+        val position = s.positions.getOrNull(index) ?: return
+        val result = screenshot.ocr ?: return
+        val corrected = result.withChar(position, replacement)
+        ocrResults[scriptFor(language) to vertical] = corrected
+        screenshot.updateResult(corrected)
+        val text = corrected.scanText(start, MAX_SCAN_CHARS)
+        if (text.text.isBlank()) {
+            hideCard()
+            return
+        }
+        scan = text
+        lookups.lookup(text.text, language)
+        showCorrection(if (replacement == null) min(index, text.positions.size - 1) else index)
+    }
+
+    /**
+     * The screenshot in a bitmap whose pixels can be read (hardware bitmaps' can't), made once.
+     * Copies aren't recycled: suggestions may still be reading one; they go when unused.
+     */
+    private fun readable(): Bitmap? = synchronized(readableLock) {
+        readableImage ?: screenshot.bitmap?.let { bitmap ->
+            (if (bitmap.config == Bitmap.Config.HARDWARE) bitmap.copy(Bitmap.Config.ARGB_8888, false) else bitmap).also { readableImage = it }
+        }
     }
 
     // --- Layout -----------------------------------------------------------------------------
@@ -663,6 +777,23 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         animate().alpha(0f).setDuration(200).setInterpolator(STANDARD).withEndAction { visibility = GONE }.start()
     }
 
+    /** A TextView that remembers where it was last touched, to tell which character was tapped. */
+    private class TouchTextView(context: Context) : TextView(context) {
+        var touchX = 0f
+            private set
+        var touchY = 0f
+            private set
+
+        @SuppressLint("ClickableViewAccessibility") // performClick is called by TextView's onTouchEvent.
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                touchX = event.x
+                touchY = event.y
+            }
+            return super.onTouchEvent(event)
+        }
+    }
+
     /** A FrameLayout whose height is limited to [maxHeight]. */
     private class BoundedFrameLayout(context: Context) : FrameLayout(context) {
         var maxHeight = Int.MAX_VALUE
@@ -689,6 +820,12 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
 
     companion object {
         private const val MAX_SCAN_CHARS = 24
+
+        /** How many characters of the scanned text can be corrected. */
+        private const val CORRECTION_CHARS = 12
+
+        /** How many suggestions are checked for making a word. */
+        private const val WORD_CHECKS = 12
 
         /**
          * The offset closest to [current] that puts the range [start, end] within [min, max]. If

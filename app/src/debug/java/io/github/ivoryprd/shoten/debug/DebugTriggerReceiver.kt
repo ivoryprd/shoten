@@ -21,6 +21,9 @@ import io.github.ivoryprd.shoten.ShotenApp
 import io.github.ivoryprd.shoten.assist.ShotenAssistService
 import io.github.ivoryprd.shoten.dict.DictionaryInstaller
 import io.github.ivoryprd.shoten.dict.importer.ImportProgress
+import io.github.ivoryprd.shoten.lookup.Language
+import io.github.ivoryprd.shoten.ocr.Box
+import io.github.ivoryprd.shoten.ocr.CharSuggestions
 import io.github.ivoryprd.shoten.ocr.OcrScript
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +36,9 @@ import java.io.File
  *  - SHOW_SCREEN_LOOKUP opens the screen lookup without the assist gesture.
  *  - IMPORT_DICTIONARY imports the file at the "path" extra.
  *  - OCR_FILE runs text recognition on the image at the "path" extra and logs the result (with
- *    the "vertical" extra, as vertical text).
+ *    the "vertical" extra, as vertical text; with "chars", every character's box).
+ *  - SUGGEST logs what the character in the "char" extra may be, read in the "box" (left, top,
+ *    right, bottom) of the image at "path", in the "language" ("ja" or "zh").
  *  - SNAPSHOT draws the app's windows in software and saves a PNG to the "path" extra (default:
  *    cache/snapshot.png) after the optional "delay" (ms). Useful where screencap returns black
  *    frames, as on emulators without GPU acceleration. Needs hidden API access:
@@ -68,7 +73,12 @@ class DebugTriggerReceiver : BroadcastReceiver() {
                         CoroutineScope(Dispatchers.Default).launch {
                             val result = app.ocr.recognize(bitmap, OcrScript.JAPANESE, intent.getBooleanExtra("vertical", false))
                             Log.i(TAG, "Converted: empty=${result.isEmpty} text=${result.fullText.replace('\n', '|')}")
-                            for (block in result.blocks) for (line in block.lines) Log.i(TAG, "converted '${line.text}' box=${line.box} vertical=${line.vertical}")
+                            for (block in result.blocks) for (line in block.lines) {
+                                Log.i(TAG, "converted '${line.text}' box=${line.box} vertical=${line.vertical}")
+                                if (intent.getBooleanExtra("chars", false)) {
+                                    for (c in line.chars) Log.i(TAG, "  '${c.text}' ${c.box?.let { "${it.left.toInt()},${it.top.toInt()},${it.right.toInt()},${it.bottom.toInt()}" }}")
+                                }
+                            }
                         }
                     }
                     .addOnFailureListener { Log.e(TAG, "ML Kit failed", it) }
@@ -85,6 +95,31 @@ class DebugTriggerReceiver : BroadcastReceiver() {
                         pending.finish()
                     }
                 }, intent.getIntExtra("delay", 0).toLong())
+            }
+            ACTION_SUGGEST -> {
+                val path = intent.getStringExtra("path") ?: return
+                val char = intent.getStringExtra("char") ?: return
+                val box = intent.getStringExtra("box")?.split(',')?.map { it.trim().toFloat() } ?: return
+                val language = Language.fromCode(intent.getStringExtra("language") ?: "ja")
+                val app = ShotenApp.get(context)
+                val pending = goAsync()
+                Thread {
+                    try {
+                        val bitmap = BitmapFactory.decodeFile(path)
+                        if (bitmap == null) {
+                            Log.e(TAG, "Cannot decode $path")
+                            return@Thread
+                        }
+                        val cell = CharSuggestions.cellOf(bitmap, Box(box[0], box[1], box[2], box[3]))
+                        repeat(2) { round ->
+                            val start = System.nanoTime()
+                            val suggestions = app.charSuggestions.suggest(char, cell, language)
+                            Log.i(TAG, "Suggestions for $char (${if (round == 0) "first" else "again"}, ${(System.nanoTime() - start) / 1_000_000} ms): ${suggestions.joinToString("")}")
+                        }
+                    } finally {
+                        pending.finish()
+                    }
+                }.start()
             }
             ACTION_IMPORT -> {
                 val path = intent.getStringExtra("path") ?: return
@@ -155,5 +190,6 @@ class DebugTriggerReceiver : BroadcastReceiver() {
         private const val ACTION_SHOW = "io.github.ivoryprd.shoten.debug.SHOW_SCREEN_LOOKUP"
         private const val ACTION_IMPORT = "io.github.ivoryprd.shoten.debug.IMPORT_DICTIONARY"
         private const val ACTION_OCR = "io.github.ivoryprd.shoten.debug.OCR_FILE"
+        private const val ACTION_SUGGEST = "io.github.ivoryprd.shoten.debug.SUGGEST"
     }
 }

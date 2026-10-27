@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 class VerticalLayoutTest {
     private val white = 0xFFFFFFFF.toInt()
@@ -120,6 +121,47 @@ class VerticalLayoutTest {
     }
 
     @Test
+    fun furiganaOfSeparateWordsIsNotOnOneGrid() {
+        // Readings half the size of the text, centered on their words: two over the first
+        // character, one over the second, two over the third. The gaps between them aren't whole
+        // cells, so no grid fits all of them.
+        val canvas = Canvas(400, 500)
+        canvas.column(200, 40, 50, 7)
+        canvas.column(252, 40, 25, 2, seed = 1)
+        canvas.column(252, 102, 25, 1, seed = 2)
+        canvas.column(252, 140, 25, 2, seed = 0)
+        val columns = find(canvas, 46f).sortedByDescending { it.box.right }
+        assertEquals(2, columns.size)
+        val furigana = columns[0]
+        assertEquals(5, furigana.cells.size)
+        furigana.cells.zip(listOf(40, 65, 102, 140, 165)).forEach { (cell, top) ->
+            assertEquals("cell at $top", top.toFloat(), cell.top, 3f)
+            assertEquals(25f, cell.height, 2f)
+        }
+        assertCells(columns[1], 200, 40, 50, 7)
+    }
+
+    @Test
+    fun cleaningKeepsInkAndRemovesFaintPatterns() {
+        val white = 0xFFFFFFFF.toInt()
+        fun gray(l: Int) = (0xFF shl 24) or (l shl 16) or (l shl 8) or l
+        fun clean(pixel: Int, background: Int, contrast: VerticalLayout.Contrast) =
+            VerticalLayout.clean(intArrayOf(pixel), background, contrast)[0] and 0xFF
+        // Black text on white with gray screentone: the tone goes, the text stays.
+        val text = VerticalLayout.Contrast(127, 255)
+        assertTrue(clean(gray(150), white, text) > 245)
+        assertEquals(0, clean(gray(0), white, text))
+        assertEquals(255, clean(white, white, text))
+        // Colors become gray by their brightness.
+        assertEquals(0, clean(0xFF000000.toInt(), white, text))
+        // Black text outlined in white on a gray picture: both stay as they are.
+        val outlined = VerticalLayout.Contrast(64, 128)
+        assertEquals(0, clean(gray(0), gray(128), outlined))
+        assertEquals(255, clean(gray(255), gray(128), outlined))
+        assertEquals(128, clean(gray(150), gray(128), outlined))
+    }
+
+    @Test
     fun lightTextOnDarkBackground() {
         val canvas = Canvas(300, 400, background = 0xFF141828.toInt())
         canvas.column(150, 30, 40, 6, color = 0xFFF0F0F0.toInt())
@@ -149,6 +191,10 @@ class VerticalLayoutTest {
         assertEquals(mapOf(2 to "。", 5 to "、"), columns[0].marks)
         assertCells(columns[1], 90, 40, 40, 5)
         assertEquals(mapOf(1 to "ー", 3 to "ー"), columns[1].marks)
+        // The ink of every cell: the period's in the upper right of its cell.
+        assertEquals(7, columns[0].inks.size)
+        val period = columns[0].inks[2]!!
+        assertTrue(period.left >= 150 + 20 && period.bottom <= 40 + 2 * 40 + 20)
     }
 
     @Test
@@ -163,6 +209,18 @@ class VerticalLayoutTest {
         assertEquals(2, columns.size)
         assertCells(columns[0], 300, 40, 40, 9)
         assertCells(columns[1], 240, 40, 40, 7)
+    }
+
+    @Test
+    fun theEndOfACharacterCutOffIsNoMark() {
+        // A column whose grid cuts off the bottom of a character: a small piece of it at the top
+        // of the next cell, in its upper right, where 、 would be.
+        val canvas = Canvas(300, 500)
+        canvas.column(150, 40, 40, 5)
+        canvas.rect(150 + 26, 40 + 5 * 40, 150 + 32, 40 + 5 * 40 + 8)
+        val columns = find(canvas, 37f)
+        assertEquals(1, columns.size)
+        assertTrue(columns[0].marks.isEmpty())
     }
 
     @Test
@@ -189,6 +247,26 @@ class VerticalLayoutTest {
         // A bar read as a dash is one: ――.
         assertEquals("そ――", read(coffee, 0 to "そ", 1 to "―", 3 to "―"))
         assertEquals("コーヒ」", read(column = VerticalLayout.Column(column.box, cells, white), 0 to "コ", 1 to "|", 2 to "ヒ", 3 to "ー"))
+    }
+
+    @Test
+    fun smallKanaAreToldByTheirInk() {
+        val cells = List(4) { Box(100f, 40f + it * 40, 140f, 80f + it * 40) }
+        val inks = listOf(
+            Box(104f, 43f, 136f, 77f), // A full-size character.
+            Box(120f, 84f, 138f, 102f), // Small, in the upper right: a small kana in vertical text.
+            Box(110f, 130f, 130f, 150f), // Small, but in the middle.
+            Box(103f, 163f, 137f, 197f), // Full-size.
+        )
+        val column = VerticalLayout.Column(Box(100f, 40f, 140f, 200f), cells, white, inks = inks)
+        fun read(vararg texts: String) =
+            VerticalLayout.readColumn(column, texts.mapIndexed { k, t -> OcrChar(t, cells[k]) }).joinToString("") { it.text }
+        // The recognizer took the small kana for a full-size one, and the other way round.
+        assertEquals("待ってく", read("待", "つ", "て", "く"))
+        assertEquals("待ってケ", read("待", "っ", "て", "ヶ"))
+        assertEquals("待っつつ", read("待", "っ", "つ", "っ"))
+        // Characters without small forms stay; so does what's small but in the middle of its cell.
+        assertEquals("あっヶケ", read("あ", "つ", "ヶ", "ケ"))
     }
 
     @Test

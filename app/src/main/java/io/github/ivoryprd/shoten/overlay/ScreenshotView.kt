@@ -183,6 +183,12 @@ class ScreenshotView(context: Context, private val listener: Listener) : View(co
         boxesAnimator = fade(boxesAnimator, 0f, 1f, 400, delay = 100) { boxes = it }
     }
 
+    /** Replaces the shown result with [result], a corrected version of it, without animating. */
+    fun updateResult(result: OcrResult) {
+        ocr = result
+        invalidate()
+    }
+
     fun setSelection(positions: List<CharPosition>) {
         val appearing = selection.isEmpty() && positions.isNotEmpty()
         selection = positions

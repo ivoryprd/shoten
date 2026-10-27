@@ -58,8 +58,11 @@ class OcrBlock(val lines: List<OcrLine>)
 
 data class CharPosition(val block: Int, val line: Int, val char: Int)
 
-/** Text to scan from a tapped character, with the position of every character in it. */
-class ScanText(val text: String, private val positions: List<CharPosition>, private val offsets: IntArray) {
+/**
+ * Text to scan from a tapped character, with the [positions] of its characters in the result
+ * and their [offsets] in the text (they can differ: Latin words on separate lines get a space).
+ */
+class ScanText(val text: String, val positions: List<CharPosition>, val offsets: IntArray) {
     /** Positions of the characters covered by the first [length] UTF-16 units of [text]. */
     fun positionsCovering(length: Int): List<CharPosition> =
         positions.filterIndexed { i, _ -> offsets[i] < length }
@@ -73,6 +76,25 @@ class OcrResult(val blocks: List<OcrBlock>, val width: Int, val height: Int) {
     fun charAt(p: CharPosition): OcrChar? = blocks.getOrNull(p.block)?.lines?.getOrNull(p.line)?.chars?.getOrNull(p.char)
 
     fun lineAt(p: CharPosition): OcrLine? = blocks.getOrNull(p.block)?.lines?.getOrNull(p.line)
+
+    /**
+     * The result with the character at [position] corrected to [text], or removed if [text] is
+     * null. The other characters keep their positions, but those after a removed one in its line.
+     */
+    fun withChar(position: CharPosition, text: String?): OcrResult {
+        val line = lineAt(position) ?: return this
+        val old = line.chars.getOrNull(position.char) ?: return this
+        val chars = line.chars.toMutableList()
+        if (text == null) chars.removeAt(position.char) else chars[position.char] = OcrChar(text, old.box)
+        val corrected = OcrLine(chars, line.box, forceVertical = line.vertical)
+        return OcrResult(
+            blocks.mapIndexed { b, block ->
+                if (b != position.block) block else OcrBlock(block.lines.mapIndexed { l, it -> if (l == position.line) corrected else it })
+            },
+            width,
+            height,
+        )
+    }
 
     private fun lineAt(ref: LineRef): OcrLine? = blocks.getOrNull(ref.block)?.lines?.getOrNull(ref.line)
 

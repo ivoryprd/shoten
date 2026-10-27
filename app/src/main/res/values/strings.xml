@@ -102,6 +102,13 @@
     <string name="state_off">Off</string>
     <string name="action_copy">Copy</string>
     <string name="action_copy_all">Copy all text</string>
+    <string name="action_correct_text">Correct the text</string>
+    <string name="action_delete_character">Delete the character</string>
+    <string name="action_done">Done</string>
+    <string name="correction_loading">Looking for similar characters…</string>
+    <string name="correction_suggestions">It may be</string>
+    <string name="correction_none">No similar characters</string>
+    <string name="correction_makes_word">%1$s, makes a word</string>
     <string name="action_close">Close</string>
     <string name="action_back">Back</string>
     <string name="copied">Copied “%1$s”</string>

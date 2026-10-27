@@ -7,11 +7,15 @@ import android.graphics.Color
 import android.graphics.Paint
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -26,6 +30,9 @@ class VerticalSheetTest {
     )
 
     private fun whole(vararg columns: VerticalLayout.Column) = columns.map { VerticalSheet.Row(it, 0, it.cells.size) }
+
+    /** Whether the pixel at ([x], [y]) is dark: ink on a sheet (which is gray). */
+    private fun Bitmap.inkAt(x: Int, y: Int) = Color.red(getPixel(x, y)) < 128
 
     @Test
     fun charactersReadOnTheSheetGoBackToTheirCells() {
@@ -74,8 +81,8 @@ class VerticalSheetTest {
         val column = VerticalLayout.Column(Box(100f, 50f, 140f, 130f), cells, Color.WHITE, mapOf(0 to "。"))
         val sheet = VerticalSheet.create(image, whole(column))
         // On the sheet it is where horizontal text has it: in the lower left.
-        assertEquals(Color.RED, sheet.bitmap.getPixel(30 + VerticalSheet.CELL / 4, 30 + VerticalSheet.CELL * 3 / 4))
-        assertEquals(Color.WHITE, sheet.bitmap.getPixel(30 + VerticalSheet.CELL * 3 / 4, 30 + VerticalSheet.CELL / 4))
+        assertTrue(sheet.bitmap.inkAt(30 + VerticalSheet.CELL / 4, 30 + VerticalSheet.CELL * 3 / 4))
+        assertFalse(sheet.bitmap.inkAt(30 + VerticalSheet.CELL * 3 / 4, 30 + VerticalSheet.CELL / 4))
         // If the recognizer misses it anyway, it is put in.
         val read = runBlocking { VerticalSheet.read(image, listOf(column)) { OcrResult(emptyList(), it.width, it.height) } }
         assertEquals("。", read.getValue(column).joinToString("") { it.text })
@@ -95,36 +102,60 @@ class VerticalSheetTest {
         // On the sheet it is a horizontal bar across the middle of the cell.
         val c = 30 + VerticalSheet.CELL / 2
         val d = VerticalSheet.CELL / 3
-        assertEquals(Color.RED, sheet.bitmap.getPixel(c - d, c))
-        assertEquals(Color.RED, sheet.bitmap.getPixel(c + d, c))
-        assertEquals(Color.WHITE, sheet.bitmap.getPixel(c, c - d))
-        assertEquals(Color.WHITE, sheet.bitmap.getPixel(c, c + d))
+        assertTrue(sheet.bitmap.inkAt(c - d, c))
+        assertTrue(sheet.bitmap.inkAt(c + d, c))
+        assertFalse(sheet.bitmap.inkAt(c, c - d))
+        assertFalse(sheet.bitmap.inkAt(c, c + d))
+    }
+
+    @Test
+    fun screentoneIsCleanedAway() {
+        // A character (a black bar) on screentone (gray dots) on white.
+        val image = Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888)
+        Canvas(image).apply {
+            drawColor(Color.WHITE)
+            val tone = Paint().apply { color = Color.rgb(150, 150, 150) }
+            for (y in 0 until 200 step 4) for (x in 0 until 200 step 4) drawRect(x.toFloat(), y.toFloat(), x + 2f, y + 2f, tone)
+            drawRect(104f, 66f, 136f, 74f, Paint().apply { color = Color.BLACK })
+        }
+        val cells = listOf(Box(100f, 50f, 140f, 90f))
+        val column = VerticalLayout.Column(cells[0], cells, Color.WHITE, contrast = VerticalLayout.Contrast(127, 255))
+        val sheet = VerticalSheet.create(image, whole(column)).bitmap
+        // Every pixel of the cell is white but the character's, which is black.
+        val c = 30 + VerticalSheet.CELL / 2
+        for (y in 30 + 2 until 30 + VerticalSheet.CELL - 2) for (x in 30 + 2 until 30 + VerticalSheet.CELL - 2) {
+            val l = Color.red(sheet.getPixel(x, y))
+            if (abs(y - c) <= 4 && abs(x - c) <= 20) assertTrue("ink at $x, $y: $l", l < 40) else if (abs(y - c) >= 10) assertTrue("tone at $x, $y: $l", l > 240)
+        }
     }
 
     @Test
     fun longColumnsTakeSeveralRowsAndSheets() {
-        // A short column, then columns longer than a row: 1 + 8 * 2 rows, more than a sheet holds,
-        // so the last column starts on the first sheet and ends on the second.
+        // A short column, then columns longer than a row (each of another length): 1 + 8 * 2 rows,
+        // more than a sheet holds, so the last column starts on the first sheet and ends on the second.
         val pitch = 40f
-        val columns = listOf(column(360f, 10f, pitch, 10)) + List(8) { column(320f - it * pitch, 10f, pitch, 40) }
-        // Every cell in a color of its own: red for its column, green for its place in the column.
+        val columns = listOf(column(360f, 10f, pitch, 10)) + List(8) { column(320f - it * pitch, 10f, pitch, 33 + it) }
+        // Every cell in a gray of its own for its place in the column, all of it ink (any
+        // difference from the background is).
         val image = Bitmap.createBitmap(400, 1700, Bitmap.Config.ARGB_8888)
         Canvas(image).apply {
             drawColor(Color.WHITE)
             val paint = Paint()
-            columns.forEachIndexed { j, c ->
+            columns.forEach { c ->
                 c.cells.forEachIndexed { i, b ->
-                    paint.color = Color.rgb(10 + 20 * j, 10 + 5 * i, 0)
+                    paint.color = Color.rgb(4 + 6 * i, 4 + 6 * i, 4 + 6 * i)
                     drawRect(b.left, b.top, b.right, b.bottom, paint)
                 }
             }
         }
-        fun charOf(j: Int, i: Int) = String(Character.toChars(0x4E00 + 64 * j + i))
+        val allInk = VerticalLayout.Contrast(0, 0)
+        val inked = columns.map { VerticalLayout.Column(it.box, it.cells, it.background, contrast = allInk) }
+        fun charOf(i: Int) = String(Character.toChars(0x4E00 + i))
 
         // Reads the colors in the middle of the cells of each row of a sheet.
         val sheets = ArrayList<Pair<Int, Int>>()
         val read = runBlocking {
-            VerticalSheet.read(image, columns) { sheet ->
+            VerticalSheet.read(image, inked) { sheet ->
                 sheets += sheet.width to sheet.height
                 val lines = ArrayList<OcrLine>()
                 var top = 30
@@ -134,9 +165,8 @@ class VerticalSheetTest {
                     while (left + VerticalSheet.CELL <= sheet.width) {
                         val p = sheet.getPixel(left + VerticalSheet.CELL / 2, top + VerticalSheet.CELL / 2)
                         if (p != Color.WHITE) {
-                            val j = (Color.red(p) - 10 + 10) / 20
-                            val i = (Color.green(p) - 10 + 2) / 5
-                            chars += OcrChar(charOf(j, i), Box(left.toFloat(), top.toFloat(), left + cell, top + cell))
+                            val i = ((Color.red(p) - 4) / 6f).roundToInt()
+                            chars += OcrChar(charOf(i), Box(left.toFloat(), top.toFloat(), left + cell, top + cell))
                         }
                         left += VerticalSheet.CELL
                     }
@@ -150,9 +180,9 @@ class VerticalSheetTest {
         // Two sheets, no wider than a row of cells.
         assertEquals(2, sheets.size)
         assertEquals(30 * 2 + VerticalSheet.ROW_CELLS * VerticalSheet.CELL, sheets[0].first)
-        columns.forEachIndexed { j, c ->
+        inked.forEachIndexed { j, c ->
             val chars = read.getValue(c)
-            assertEquals("column $j", c.cells.indices.joinToString("") { charOf(j, it) }, chars.joinToString("") { it.text })
+            assertEquals("column $j", c.cells.indices.joinToString("") { charOf(it) }, chars.joinToString("") { it.text })
             assertEquals(c.cells, chars.map { it.box })
         }
     }
