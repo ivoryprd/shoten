@@ -127,7 +127,8 @@ ABIs to save space, e.g. `./gradlew assembleOfflineRelease -Pshoten.abiFilters=a
 ```
 
 The unit tests cover the JSON parser, deinflection, lookups, importers, glossary compression, CSS
-subset and OCR geometry; Robolectric tests cover the SQLite storage and rendering. Tests against the real
+subset, OCR geometry, vertical text layout and character suggestions; Robolectric tests cover the
+SQLite storage, rendering and the correction panel. Tests against the real
 dictionaries run when `SHOTEN_TEST_DATA` points to a directory containing `jitendex-yomitan.zip` and
 `cedict.zip` (they import all of Jitendex, check sentence lookups and render every tenth entry).
 
