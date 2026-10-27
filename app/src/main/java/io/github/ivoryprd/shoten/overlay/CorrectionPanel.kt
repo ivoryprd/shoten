@@ -70,10 +70,16 @@ class CorrectionPanel(context: Context, private val ui: ResultsView.Ui, private 
         label.text = context.getString(R.string.correction_loading)
     }
 
-    /** Shows what the selected character may be. */
-    fun setSuggestions(list: List<Suggestion>) {
+    /** Shows what the selected character may be; unless [final], more are still being looked for. */
+    fun setSuggestions(list: List<Suggestion>, final: Boolean = true) {
         suggestions.removeAllViews()
-        label.text = context.getString(if (list.isEmpty()) R.string.correction_none else R.string.correction_suggestions)
+        label.text = context.getString(
+            when {
+                !final -> R.string.correction_loading
+                list.isEmpty() -> R.string.correction_none
+                else -> R.string.correction_suggestions
+            },
+        )
         for (s in list) {
             suggestions.addView(key(s.text, if (s.makesWord) Style.WORD else Style.PLAIN) { listener.onCorrect(selected, s.text) }.apply {
                 contentDescription = if (s.makesWord) context.getString(R.string.correction_makes_word, s.text) else s.text

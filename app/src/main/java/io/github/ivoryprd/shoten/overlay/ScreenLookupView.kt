@@ -18,6 +18,7 @@ import android.text.Spanned
 import android.text.TextUtils
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -608,12 +609,18 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         val language = language
         suggestJob?.cancel()
         suggestJob = scope.launch {
+            // The known look-alikes at once, then what looks like the character on the screen
+            // (the first time, every character is drawn, which takes a moment).
+            val near = withContext(Dispatchers.Default) { app.charSuggestions.suggest(char.text, null, language) }
+            if (near.isNotEmpty()) correctionPanel.setSuggestions(withContext(app.lookupDispatcher) { byWords(s, selected, char.text, near, language) }, final = false)
+            val start = System.nanoTime()
+            val vertical = result.lineAt(s.positions[selected])?.vertical == true
             val suggestions = withContext(Dispatchers.Default) {
                 val cell = char.box?.let { box -> readable()?.let { CharSuggestions.cellOf(it, box) } }
-                app.charSuggestions.suggest(char.text, cell, language)
+                app.charSuggestions.suggest(char.text, cell, language, vertical)
             }
-            val ranked = withContext(app.lookupDispatcher) { byWords(s, selected, char.text, suggestions, language) }
-            correctionPanel.setSuggestions(ranked)
+            Log.d(TAG, "Suggestions for ${char.text} in ${(System.nanoTime() - start) / 1_000_000} ms")
+            correctionPanel.setSuggestions(withContext(app.lookupDispatcher) { byWords(s, selected, char.text, suggestions, language) })
         }
     }
 
@@ -819,6 +826,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
     }
 
     companion object {
+        private const val TAG = "ScreenLookup"
         private const val MAX_SCAN_CHARS = 24
 
         /** How many characters of the scanned text can be corrected. */

@@ -251,22 +251,23 @@ class VerticalLayoutTest {
 
     @Test
     fun smallKanaAreToldByTheirInk() {
-        val cells = List(4) { Box(100f, 40f + it * 40, 140f, 80f + it * 40) }
-        val inks = listOf(
-            Box(104f, 43f, 136f, 77f), // A full-size character.
-            Box(120f, 84f, 138f, 102f), // Small, in the upper right: a small kana in vertical text.
-            Box(110f, 130f, 130f, 150f), // Small, but in the middle.
-            Box(103f, 163f, 137f, 197f), // Full-size.
-        )
-        val column = VerticalLayout.Column(Box(100f, 40f, 140f, 200f), cells, white, inks = inks)
+        // As measured in a real column: characters reach across 0.79 to 0.91 of their cells, っ
+        // 0.66, a bit right of the middle. One more small character, in the middle of its cell.
+        val cells = List(6) { Box(100f, 40f + it * 40, 140f, 80f + it * 40) }
+        fun ink(k: Int, extent: Float, right: Float) = cells[k].let { c ->
+            val half = extent * 40 / 2
+            Box(c.left + right * 40 - half, c.centerY - half, c.left + right * 40 + half, c.centerY + half)
+        }
+        val inks = listOf(ink(0, 0.91f, 0.5f), ink(1, 0.66f, 0.58f), ink(2, 0.79f, 0.48f), ink(3, 0.85f, 0.47f), ink(4, 0.64f, 0.48f), ink(5, 0.85f, 0.5f))
+        val column = VerticalLayout.Column(Box(100f, 40f, 140f, 280f), cells, white, inks = inks)
         fun read(vararg texts: String) =
             VerticalLayout.readColumn(column, texts.mapIndexed { k, t -> OcrChar(t, cells[k]) }).joinToString("") { it.text }
         // The recognizer took the small kana for a full-size one, and the other way round.
-        assertEquals("待ってく", read("待", "つ", "て", "く"))
-        assertEquals("待ってケ", read("待", "っ", "て", "ヶ"))
-        assertEquals("待っつつ", read("待", "っ", "つ", "っ"))
-        // Characters without small forms stay; so does what's small but in the middle of its cell.
-        assertEquals("あっヶケ", read("あ", "つ", "ヶ", "ケ"))
+        assertEquals("待ってくれる", read("待", "つ", "て", "く", "れ", "る"))
+        assertEquals("待ってつれる", read("待", "っ", "て", "っ", "れ", "る"))
+        // Small but in the middle of its cell (not a small kana's place): as read.
+        assertEquals("あっこよやわ", read("あ", "っ", "こ", "よ", "や", "わ"))
+        assertEquals("あっこよゃわ", read("あ", "っ", "こ", "よ", "ゃ", "わ"))
     }
 
     @Test

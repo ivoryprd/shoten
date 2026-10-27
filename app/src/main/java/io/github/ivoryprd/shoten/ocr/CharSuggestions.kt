@@ -20,8 +20,8 @@ import kotlin.math.roundToInt
  */
 class CharSuggestions(
     private val similar: SimilarChars,
-    /** The image of a character as [GlyphFeatures] takes it (see [GlyphRenderer]). */
-    private val render: (text: String, language: Language) -> FloatArray,
+    /** The image of a character as [GlyphFeatures] takes it, in its vertical form if [vertical] (see [GlyphRenderer]). */
+    private val render: (text: String, language: Language, vertical: Boolean) -> FloatArray,
 ) {
     private class Shapes(val chars: List<String>, val values: ByteArray, val size: Int)
 
@@ -33,12 +33,17 @@ class CharSuggestions(
     /**
      * The characters that [char] may really be, the likeliest first: if its image [cell] is known
      * (see [GlyphFeatures.cellInk]), by how much they look like it, else by how much they look
-     * like [char]. The first time for a language takes a while (every character is drawn).
+     * like [char] (which is quick). The first time for a language with an image takes a while:
+     * every character is drawn. In [vertical] text, characters are compared in their vertical
+     * forms (small kana and punctuation in the upper right, the long vowel mark turned).
      */
-    @Synchronized
-    fun suggest(char: String, cell: FloatArray?, language: Language, max: Int = 16): List<String> {
+    fun suggest(char: String, cell: FloatArray?, language: Language, vertical: Boolean = false, max: Int = 16): List<String> {
         val near = similar.of(char, language)
         if (cell == null) return near.take(max)
+        return synchronized(this) { byImage(char, near, cell, language, vertical, max) }
+    }
+
+    private fun byImage(char: String, near: List<String>, cell: FloatArray, language: Language, vertical: Boolean, max: Int): List<String> {
         val shape = GlyphFeatures.shape(cell)
         val all = shapesOf(language)
         val rough = FloatArray(all.chars.size) { i ->
@@ -53,22 +58,25 @@ class CharSuggestions(
         val image = GlyphFeatures.of(cell)
         // The look-alikes of what was read are likelier than other characters that look as much like the image.
         return candidates
-            .map { c -> c to GlyphFeatures.similarity(image, featuresOf(c, language)) + if (c in near) NEAR else 0f }
+            .map { c -> c to GlyphFeatures.similarity(image, featuresOf(c, language, vertical)) + if (c in near) NEAR else 0f }
             .sortedByDescending { it.second }
             .take(max)
             .map { it.first }
     }
 
-    private fun featuresOf(char: String, language: Language): FloatArray =
-        features.getOrPut("${language.code}:$char") { GlyphFeatures.of(render(char, language)) }
+    private fun featuresOf(char: String, language: Language, vertical: Boolean): FloatArray =
+        features.getOrPut("${language.code}:${if (vertical) "v" else "h"}:$char") { GlyphFeatures.of(render(char, language, vertical)) }
 
-    /** The shapes of all the characters of [SimilarChars.characters], kept small (a byte a value). */
+    /**
+     * The shapes of all the characters of [SimilarChars.characters], kept small (a byte a value).
+     * Only to pick the likeliest ones, so in their usual forms for vertical text too: few differ.
+     */
     private fun shapesOf(language: Language): Shapes = shapes.getOrPut(language) {
         val chars = similar.characters(language)
         val size = GlyphFeatures.SHAPE_SIZE
         val values = ByteArray(chars.size * size)
         chars.forEachIndexed { i, c ->
-            GlyphFeatures.shape(render(c, language)).forEachIndexed { k, v ->
+            GlyphFeatures.shape(render(c, language, false)).forEachIndexed { k, v ->
                 values[i * size + k] = (v * QUANTUM).roundToInt().coerceIn(-127, 127).toByte()
             }
         }
@@ -111,10 +119,11 @@ class GlyphRenderer {
     }
 
     @Synchronized
-    fun ink(text: String, language: Language): FloatArray {
+    fun ink(text: String, language: Language, vertical: Boolean): FloatArray {
         bitmap.eraseColor(Color.TRANSPARENT)
         // Kanji and hanzi differ in their details; the locale picks the forms.
         paint.textLocale = if (language == Language.CHINESE) Locale.CHINESE else Locale.JAPANESE
+        paint.fontFeatureSettings = if (vertical) "'vert'" else null
         // CJK fonts put the em box from 0.88 em above the baseline to 0.12 em below: centered.
         canvas.drawText(text, size / 2f, size / 2f + 0.38f * GlyphFeatures.EM, paint)
         buffer.rewind()

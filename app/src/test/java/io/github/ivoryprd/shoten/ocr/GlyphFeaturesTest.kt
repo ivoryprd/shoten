@@ -67,7 +67,7 @@ class GlyphFeaturesTest {
         // Four characters, drawn as the shapes above; 二 looks like 一 and the other way round.
         val shapes = mapOf("い" to one, "う" to bar, "え" to cross, "お" to box, "か" to two)
         val similar = SimilarChars { "い\tか\nか\tい\nう\tえ\nえ\tう\nお\tえ\n".byteInputStream() }
-        val suggestions = CharSuggestions(similar) { text, _ -> shapes.getValue(text) }
+        val suggestions = CharSuggestions(similar) { text, _, _ -> shapes.getValue(text) }
         // Without an image: the look-alikes.
         assertEquals(listOf("か"), suggestions.suggest("い", null, Language.JAPANESE))
         // With one: what looks like it first (here 十 read as 一), never what was read.

@@ -38,7 +38,8 @@ import java.io.File
  *  - OCR_FILE runs text recognition on the image at the "path" extra and logs the result (with
  *    the "vertical" extra, as vertical text; with "chars", every character's box).
  *  - SUGGEST logs what the character in the "char" extra may be, read in the "box" (left, top,
- *    right, bottom) of the image at "path", in the "language" ("ja" or "zh").
+ *    right, bottom) of the image at "path", in the "language" ("ja" or "zh"), in vertical text
+ *    with the "vertical" extra.
  *  - SNAPSHOT draws the app's windows in software and saves a PNG to the "path" extra (default:
  *    cache/snapshot.png) after the optional "delay" (ms). Useful where screencap returns black
  *    frames, as on emulators without GPU acceleration. Needs hidden API access:
@@ -102,22 +103,18 @@ class DebugTriggerReceiver : BroadcastReceiver() {
                 val box = intent.getStringExtra("box")?.split(',')?.map { it.trim().toFloat() } ?: return
                 val language = Language.fromCode(intent.getStringExtra("language") ?: "ja")
                 val app = ShotenApp.get(context)
-                val pending = goAsync()
+                // Not holding the broadcast: the first suggestions can take longer than it may.
                 Thread {
-                    try {
-                        val bitmap = BitmapFactory.decodeFile(path)
-                        if (bitmap == null) {
-                            Log.e(TAG, "Cannot decode $path")
-                            return@Thread
-                        }
-                        val cell = CharSuggestions.cellOf(bitmap, Box(box[0], box[1], box[2], box[3]))
-                        repeat(2) { round ->
-                            val start = System.nanoTime()
-                            val suggestions = app.charSuggestions.suggest(char, cell, language)
-                            Log.i(TAG, "Suggestions for $char (${if (round == 0) "first" else "again"}, ${(System.nanoTime() - start) / 1_000_000} ms): ${suggestions.joinToString("")}")
-                        }
-                    } finally {
-                        pending.finish()
+                    val bitmap = BitmapFactory.decodeFile(path)
+                    if (bitmap == null) {
+                        Log.e(TAG, "Cannot decode $path")
+                        return@Thread
+                    }
+                    val cell = CharSuggestions.cellOf(bitmap, Box(box[0], box[1], box[2], box[3]))
+                    repeat(2) { round ->
+                        val start = System.nanoTime()
+                        val suggestions = app.charSuggestions.suggest(char, cell, language, intent.getBooleanExtra("vertical", false))
+                        Log.i(TAG, "Suggestions for $char (${if (round == 0) "first" else "again"}, ${(System.nanoTime() - start) / 1_000_000} ms): ${suggestions.joinToString("")}")
                     }
                 }.start()
             }

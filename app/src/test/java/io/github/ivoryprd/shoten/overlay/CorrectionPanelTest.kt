@@ -56,6 +56,15 @@ class CorrectionPanelTest {
     }
 
     @Test
+    fun moreSuggestionsToCome() {
+        panel.setText(listOf("末"), 0)
+        panel.setSuggestions(listOf(CorrectionPanel.Suggestion("未", false)), final = false)
+        assertEquals(1, find(context.getString(R.string.correction_loading)).size)
+        find("未").single().performClick()
+        assertEquals(listOf("correct 0 未"), events)
+    }
+
+    @Test
     fun noSuggestions() {
         panel.setText(listOf("x"), 0)
         panel.setSuggestions(emptyList())

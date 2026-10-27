@@ -293,6 +293,9 @@ internal object VerticalLayout {
         val byCell = read.groupBy { ch -> ch.box?.let { cellOf[it] } ?: -1 }
         val chars = ArrayList(byCell[-1].orEmpty())
         val marked = HashSet<Int>()
+        // The size of the column's characters: the median of their ink's.
+        val extents = column.cells.indices.mapNotNull { k -> if (k in column.marks) null else column.inks.getOrNull(k)?.let { extent(it, column.cells[k]) } }.sorted()
+        val usual = extents.getOrNull(extents.size / 2)
         for (k in column.cells.indices) {
             val inCell = byCell[k].orEmpty()
             val mark = column.marks[k]
@@ -301,24 +304,27 @@ internal object VerticalLayout {
                 chars += OcrChar(mark, column.cells[k])
             } else {
                 val ink = column.inks.getOrNull(k)
-                chars += if (ink == null) inCell else inCell.map { sized(it, column.cells[k], ink) }
+                chars += if (ink == null || usual == null) inCell else inCell.map { sized(it, column.cells[k], ink, usual) }
             }
         }
         return fixVerticalForms(chars, keep = marked)
     }
 
+    /** How far the [ink] in a [cell] reaches, across or down, relative to the cell. */
+    private fun extent(ink: Box, cell: Box) = max(ink.width, ink.height) / cell.width
+
     /**
-     * [c] as a small or a full-size kana, as the [ink] in its [cell] tells: vertical text sets
-     * small kana in the upper right of their cells, and on a sheet the recognizer often reads them
-     * as full-size ones (or the other way round).
+     * [c] as a small or a full-size kana, as the [ink] in its [cell] tells, compared with the
+     * [usual] extent of the column's characters: on a sheet the recognizer often reads small kana
+     * as full-size ones (or the other way round). Small kana are about three quarters the size of
+     * others and set right of the middle (in the upper right) of their cells in vertical text.
      */
-    private fun sized(c: OcrChar, cell: Box, ink: Box): OcrChar {
-        val extent = max(ink.width, ink.height) / cell.width
+    private fun sized(c: OcrChar, cell: Box, ink: Box, usual: Float): OcrChar {
+        val size = extent(ink, cell) / usual
         val right = (ink.centerX - cell.left) / cell.width
-        val up = (ink.centerY - cell.top) / cell.height
         val fixed = when {
-            extent <= 0.62f && right >= 0.55f && up <= 0.45f -> SMALL_KANA[c.text]
-            extent >= 0.72f -> FULL_KANA[c.text]
+            size <= 0.8f && right >= 0.52f -> SMALL_KANA[c.text]
+            size >= 0.9f -> FULL_KANA[c.text]
             else -> null
         }
         return if (fixed == null) c else OcrChar(fixed, c.box)
