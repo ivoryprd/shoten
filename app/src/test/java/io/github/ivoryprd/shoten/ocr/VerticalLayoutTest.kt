@@ -250,6 +250,20 @@ class VerticalLayoutTest {
     }
 
     @Test
+    fun punctuationMadeUpBesideACharacterIsDropped() {
+        val cells = List(3) { Box(100f, 40f + it * 40, 140f, 80f + it * 40) }
+        val column = VerticalLayout.Column(Box(100f, 40f, 140f, 160f), cells, white)
+        fun read(vararg chars: Pair<Int, String>) =
+            VerticalLayout.readColumn(column, chars.map { (k, text) -> OcrChar(text, cells[k]) }).joinToString("") { it.text }
+        // The recognizer read し、 in the last cell of a row (seen on a phone).
+        assertEquals("強し", read(0 to "強", 1 to "し", 1 to "、"))
+        // Punctuation by itself in a cell stays.
+        assertEquals("強し、", read(0 to "強", 1 to "し", 2 to "、"))
+        // So do two characters (!? set in one cell).
+        assertEquals("強!?", read(0 to "強", 1 to "!", 1 to "?"))
+    }
+
+    @Test
     fun smallKanaAreToldByTheirInk() {
         // As measured in a real column: characters reach across 0.79 to 0.91 of their cells, っ
         // 0.66, a bit right of the middle. One more small character, in the middle of its cell.
@@ -313,6 +327,32 @@ class VerticalLayoutTest {
         assertFalse(VerticalLayout.isCovered(Box(200f, 0f, 400f, 30f), columns))
         assertFalse(VerticalLayout.isCovered(Box(100f, 200f, 230f, 240f), columns))
         assertFalse(VerticalLayout.isCovered(Box(100f, 200f, 100f, 240f), columns))
+    }
+
+    @Test
+    fun regionsGrowToTakeInColumnsBeyondThem() {
+        // Four columns, the last one longer; the recognizer found only the first.
+        val canvas = Canvas(500, 700)
+        canvas.column(400, 40, 40, 6)
+        canvas.column(344, 40, 40, 6, seed = 1)
+        canvas.column(288, 40, 40, 6, seed = 2)
+        canvas.column(232, 40, 40, 12, seed = 1)
+        var region = VerticalLayout.regions(listOf(Box(400f, 40f, 440f, 280f) to 6), canvas.width, canvas.height).single()
+        fun columns(r: VerticalLayout.Region) =
+            VerticalLayout.columns(IntArray(r.width * r.height) { i -> canvas.pixels[(r.top + i / r.width) * canvas.width + r.left + i % r.width] }, r)
+        var columns = columns(region)
+        // The region around it cuts the third column off.
+        assertTrue(columns.size < 4)
+        for (i in 0 until 4) {
+            region = VerticalLayout.grown(region, columns, canvas.width, canvas.height) ?: break
+            columns = columns(region)
+        }
+        columns = columns.sortedByDescending { it.box.right }
+        assertEquals(4, columns.size)
+        assertCells(columns[2], 288, 40, 40, 6)
+        assertCells(columns[3], 232, 40, 40, 12)
+        // Nothing to grow for when the columns are well inside.
+        assertEquals(null, VerticalLayout.grown(VerticalLayout.Region(0, 0, 500, 700, 37f), columns, canvas.width, canvas.height))
     }
 
     @Test

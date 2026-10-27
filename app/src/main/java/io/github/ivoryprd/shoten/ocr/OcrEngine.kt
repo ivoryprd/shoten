@@ -101,10 +101,23 @@ class OcrEngine(private val prefs: Prefs) {
         val seeds = firstLines.mapNotNull { line ->
             line.box?.let { it to line.chars.count { c -> c.box != null && c.text.isNotBlank() } }
         }
-        val found = VerticalLayout.regions(seeds, image.width, image.height).mapNotNull { region ->
+        fun columnsIn(region: VerticalLayout.Region): List<VerticalLayout.Column> {
             val pixels = IntArray(region.width * region.height)
             image.getPixels(pixels, 0, region.width, region.left, region.top, region.width, region.height)
-            VerticalLayout.columns(pixels, region).takeIf { it.isNotEmpty() }
+            return VerticalLayout.columns(pixels, region)
+        }
+        val found = ArrayList<List<VerticalLayout.Column>>()
+        for (start in VerticalLayout.regions(seeds, image.width, image.height)) {
+            var region = start
+            var columns = columnsIn(region)
+            // Columns cut off at the region's edges, or more beyond: look further.
+            for (i in 0 until GROW_REGIONS) {
+                region = VerticalLayout.grown(region, columns, image.width, image.height) ?: break
+                columns = columnsIn(region)
+            }
+            // Regions grown into each other find the same columns again.
+            val fresh = columns.filter { c -> found.none { columns -> columns.any { overlap(it.box, c.box) } } }
+            if (fresh.isNotEmpty()) found += fresh
         }
         if (found.isEmpty()) return first
 
@@ -202,8 +215,13 @@ class OcrEngine(private val prefs: Prefs) {
 
     private fun Rect.toBox() = Box(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
 
+    private fun overlap(a: Box, b: Box) = a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+
     companion object {
         private const val TAG = "OcrEngine"
+
+        /** How many times a region of vertical text grows to take in columns beyond its edges. */
+        private const val GROW_REGIONS = 4
         private val WARM_UP_EXECUTOR = Executors.newSingleThreadExecutor()
     }
 }

@@ -116,6 +116,23 @@ internal object VerticalLayout {
     }
 
     /**
+     * [region] grown where its [columns] reach its edges, as columns cut off there do (and where
+     * there may be more that the recognizer missed): sideways by a few columns, up or down by a
+     * few characters, within the image ([width] × [height]). Null if they don't, or it can't.
+     */
+    fun grown(region: Region, columns: List<Column>, width: Int, height: Int): Region? {
+        if (columns.isEmpty()) return null
+        val em = region.em
+        val near = 0.5f * em
+        val left = if (columns.minOf { it.box.left } - region.left < near) (region.left - 2.5f * em).toInt().coerceAtLeast(0) else region.left
+        val right = if (region.right - columns.maxOf { it.box.right } < near) ceil(region.right + 2.5f * em).toInt().coerceAtMost(width) else region.right
+        val top = if (columns.minOf { it.box.top } - region.top < near) (region.top - 6f * em).toInt().coerceAtLeast(0) else region.top
+        val bottom = if (region.bottom - columns.maxOf { it.box.bottom } < near) ceil(region.bottom + 6f * em).toInt().coerceAtMost(height) else region.bottom
+        if (left == region.left && top == region.top && right == region.right && bottom == region.bottom) return null
+        return Region(left, top, right, bottom, em)
+    }
+
+    /**
      * The columns of vertical text in [region], given the region's pixels (ARGB, row by row).
      * Returns nothing if the region doesn't look like vertical text: if no column holds at least
      * two characters.
@@ -303,8 +320,11 @@ internal object VerticalLayout {
                 marked += chars.size
                 chars += OcrChar(mark, column.cells[k])
             } else {
+                // A cell holds one character: punctuation read beside another one (where the ink
+                // shows none) was made up, as the recognizer does after the last character of a row.
+                val read = if (inCell.size > 1) inCell.filterNot { it.text in STRAY_PUNCTUATION }.ifEmpty { inCell } else inCell
                 val ink = column.inks.getOrNull(k)
-                chars += if (ink == null || usual == null) inCell else inCell.map { sized(it, column.cells[k], ink, usual) }
+                chars += if (ink == null || usual == null) read else read.map { sized(it, column.cells[k], ink, usual) }
             }
         }
         return fixVerticalForms(chars, keep = marked)
@@ -317,18 +337,21 @@ internal object VerticalLayout {
      * [c] as a small or a full-size kana, as the [ink] in its [cell] tells, compared with the
      * [usual] extent of the column's characters: on a sheet the recognizer often reads small kana
      * as full-size ones (or the other way round). Small kana are about three quarters the size of
-     * others and set right of the middle (in the upper right) of their cells in vertical text.
+     * others (in real columns 0.76 to 0.81 of the usual, full-size kana from 0.85 on) and set right
+     * of the middle (in the upper right) of their cells in vertical text.
      */
     private fun sized(c: OcrChar, cell: Box, ink: Box, usual: Float): OcrChar {
         val size = extent(ink, cell) / usual
         val right = (ink.centerX - cell.left) / cell.width
         val fixed = when {
-            size <= 0.8f && right >= 0.52f -> SMALL_KANA[c.text]
+            size <= 0.83f && right >= 0.52f -> SMALL_KANA[c.text]
             size >= 0.9f -> FULL_KANA[c.text]
             else -> null
         }
         return if (fixed == null) c else OcrChar(fixed, c.box)
     }
+
+    private val STRAY_PUNCTUATION = setOf("、", "。", ",", ".", "，", "．", "'", "`")
 
     private val SMALL_KANA = ("あぁいぃうぅえぇおぉつっやゃゆゅよょわゎアァイィウゥエェオォツッヤャユュヨョワヮカヵケヶ")
         .chunked(2).associate { it.substring(0, 1) to it.substring(1) }
