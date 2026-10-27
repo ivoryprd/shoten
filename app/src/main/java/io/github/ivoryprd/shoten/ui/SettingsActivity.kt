@@ -47,6 +47,7 @@ class SettingsActivity : Activity() {
             addView(radioGroup(options.map { it.second }, options.indexOfFirst { it.first == prefs.ocrMode }) { i ->
                 prefs.ocrMode = options[i].first
             })
+            addView(switch(R.string.settings_vertical_text, R.string.settings_vertical_text_summary, prefs.verticalText) { prefs.verticalText = it })
         })
 
         content.addView(card().apply {

@@ -34,13 +34,16 @@ data class Box(val left: Float, val top: Float, val right: Float, val bottom: Fl
 /** One recognized character (usually one code point). [box] is null for inserted spaces. */
 class OcrChar(val text: String, val box: Box?)
 
-/** A line of text. [box] is the recognizer's box of the line, or else the union of its characters. */
-class OcrLine(val chars: List<OcrChar>, lineBox: Box? = null) {
+/**
+ * A line of text. [box] is the recognizer's box of the line, or else the union of its characters.
+ * [forceVertical] makes it a column even if its shape doesn't tell (a single character).
+ */
+class OcrLine(val chars: List<OcrChar>, lineBox: Box? = null, forceVertical: Boolean = false) {
     val text: String = chars.joinToString("") { it.text }
     val box: Box? = lineBox ?: chars.mapNotNull { it.box }.reduceOrNull { a, b -> a.union(b) }
 
     /** Whether the characters run top to bottom (vertical Japanese/Chinese text). */
-    val vertical: Boolean = run {
+    val vertical: Boolean = forceVertical || run {
         val boxes = chars.mapNotNull { it.box }
         if (boxes.size < 2) {
             val b = boxes.firstOrNull()

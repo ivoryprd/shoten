@@ -69,6 +69,8 @@
     <string name="settings_title">Settings</string>
     <string name="settings_ocr_language">Screen text language</string>
     <string name="settings_ocr_auto">Automatic (Japanese, or Chinese when there is no kana)</string>
+    <string name="settings_vertical_text">Vertical text</string>
+    <string name="settings_vertical_text_summary">Read text in columns, top to bottom and right to left, as in manga and vertical novels. You can also switch with the 縦 button when looking up screen text.</string>
     <string name="settings_text_size">Text size</string>
     <string name="settings_text_small">Small</string>
     <string name="settings_text_normal">Normal</string>
@@ -95,6 +97,9 @@
     <string name="action_open_assist_settings">Open assistant settings</string>
     <string name="action_open_app">Open Shoten</string>
     <string name="action_switch_language">Switch language</string>
+    <string name="action_vertical_text">Vertical text</string>
+    <string name="state_on">On</string>
+    <string name="state_off">Off</string>
     <string name="action_copy">Copy</string>
     <string name="action_copy_all">Copy all text</string>
     <string name="action_close">Close</string>

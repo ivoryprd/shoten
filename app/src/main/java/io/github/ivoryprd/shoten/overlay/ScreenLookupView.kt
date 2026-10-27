@@ -52,7 +52,6 @@ import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.EnumMap
 import kotlin.math.roundToInt
 
 /**
@@ -80,6 +79,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
     private val backButton: ImageView
     private val toolbar = LinearLayout(context)
     private val languageChip = TextView(context)
+    private val verticalChip = TextView(context)
     private val status = TextView(context)
     private val statusAction = Button(context, null, android.R.attr.borderlessButtonStyle)
     private val statusBox = LinearLayout(context)
@@ -88,7 +88,9 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
     /** System bar and display cutout insets (left, top, right, bottom). */
     private val insets = Rect()
     private var ocrJob: Job? = null
-    private val ocrResults = EnumMap<OcrScript, OcrResult>(OcrScript::class.java)
+    /** Recognized text by script and whether it was read as vertical text. */
+    private val ocrResults = HashMap<Pair<OcrScript, Boolean>, OcrResult>()
+    private var vertical = false
     private var language = Language.JAPANESE
     private var scan: ScanText? = null
     private var scanStart: CharPosition? = null
@@ -137,7 +139,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
             if (l != oldL || t != oldT || r != oldR || b != oldB) updatePan()
         }
 
-        // Toolbar with language switch, copy and close.
+        // Toolbar with language and text direction switches, copy and close.
         toolbar.orientation = LinearLayout.HORIZONTAL
         toolbar.gravity = Gravity.CENTER_VERTICAL
         languageChip.apply {
@@ -150,6 +152,15 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
             setOnClickListener { switchLanguage() }
         }
         toolbar.addView(languageChip)
+        verticalChip.apply {
+            text = "縦"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            contentDescription = context.getString(R.string.action_vertical_text)
+            setOnClickListener { toggleVertical() }
+        }
+        toolbar.addView(verticalChip, LinearLayout.LayoutParams(ui.dp(44), ui.dp(44)).apply { marginStart = ui.dp(8) })
         toolbar.addView(toolbarButton(R.drawable.ic_copy, R.string.action_copy_all) { copyAll() })
         toolbar.addView(toolbarButton(R.drawable.ic_close, R.string.action_close) { host.dismiss() })
         toolbar.visibility = GONE
@@ -225,6 +236,8 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         hideCard()
         ocrResults.clear()
         language = initialLanguage()
+        vertical = app.prefs.verticalText
+        updateVerticalChip()
         runOcr(firstPass = true)
     }
 
@@ -235,6 +248,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         setBackgroundColor(Color.argb(140, 0, 0, 0))
         toolbar.fadeIn(-ui.dp(8).toFloat())
         languageChip.visibility = GONE
+        verticalChip.visibility = GONE
         showStatus(message, actionLabel, action = action)
     }
 
@@ -278,7 +292,8 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         val bitmap = screenshot.bitmap ?: return
         updateLanguageChip()
         val script = scriptFor(language)
-        ocrResults[script]?.let {
+        val key = script to vertical
+        ocrResults[key]?.let {
             onOcrResult(it)
             return
         }
@@ -287,7 +302,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         ocrJob?.cancel()
         ocrJob = scope.launch {
             val result = try {
-                withContext(Dispatchers.Default) { app.ocr.recognize(bitmap, script) }
+                withContext(Dispatchers.Default) { app.ocr.recognize(bitmap, script, vertical) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: OcrModelUnavailableException) {
@@ -298,7 +313,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
                 showStatus(context.getString(R.string.status_ocr_failed, e.message ?: e.javaClass.simpleName))
                 return@launch
             }
-            ocrResults[script] = result
+            ocrResults[key] = result
             // Automatic mode: Japanese text nearly always contains kana. Without any, the text is
             // probably Chinese, so try the Chinese recognizer if Chinese dictionaries are installed.
             if (firstPass && app.prefs.ocrMode == OcrMode.AUTO && script == OcrScript.JAPANESE &&
@@ -357,13 +372,33 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         runOcr(firstPass = false)
     }
 
+    /** Switches between reading text as it comes and reading it as vertical text (and remembers it). */
+    private fun toggleVertical() {
+        vertical = !vertical
+        app.prefs.verticalText = vertical
+        updateVerticalChip()
+        hideCard()
+        screenshot.setSelection(emptyList())
+        runOcr(firstPass = false)
+    }
+
+    private fun updateVerticalChip() {
+        verticalChip.visibility = VISIBLE
+        verticalChip.isSelected = vertical
+        verticalChip.setTextColor(if (vertical) ui.accent else ui.muted)
+        verticalChip.background = pill().apply { if (vertical) setStroke(ui.dp(2), ui.accent) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            verticalChip.stateDescription = context.getString(if (vertical) R.string.state_on else R.string.state_off)
+        }
+    }
+
     private fun updateLanguageChip() {
         languageChip.visibility = VISIBLE
         languageChip.text = context.getString(if (language == Language.CHINESE) R.string.language_chinese_short else R.string.language_japanese_short)
     }
 
     private fun copyAll() {
-        val text = ocrResults[scriptFor(language)]?.fullText ?: return
+        val text = ocrResults[scriptFor(language) to vertical]?.fullText ?: return
         if (text.isBlank()) return
         context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("Shoten", text))
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {

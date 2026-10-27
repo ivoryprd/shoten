@@ -23,6 +23,11 @@ class Prefs(context: Context) {
         get() = Language.fromCode(sp.getString(KEY_SEARCH_LANGUAGE, "ja")).takeIf { it != Language.OTHER } ?: Language.JAPANESE
         set(value) = sp.edit().putString(KEY_SEARCH_LANGUAGE, value.code).apply()
 
+    /** Read screen text as vertical text (columns, right to left), as in manga and vertical novels. */
+    var verticalText: Boolean
+        get() = sp.getBoolean(KEY_VERTICAL_TEXT, false)
+        set(value) = sp.edit().putBoolean(KEY_VERTICAL_TEXT, value).apply()
+
     var textScale: Float
         get() = sp.getFloat(KEY_TEXT_SCALE, 1f).coerceIn(0.7f, 1.6f)
         set(value) = sp.edit().putFloat(KEY_TEXT_SCALE, value).apply()
@@ -52,6 +57,7 @@ class Prefs(context: Context) {
         private const val KEY_OCR_MODE = "ocr_mode"
         private const val KEY_LAST_LANGUAGE = "last_screen_language"
         private const val KEY_SEARCH_LANGUAGE = "search_language"
+        private const val KEY_VERTICAL_TEXT = "vertical_text"
         private const val KEY_TEXT_SCALE = "text_scale"
         private const val KEY_SHOW_BOXES = "show_text_boxes"
         private const val KEY_SHOW_FREQUENCIES = "show_frequencies"

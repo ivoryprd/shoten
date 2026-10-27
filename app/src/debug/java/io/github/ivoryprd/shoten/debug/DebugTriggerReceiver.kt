@@ -32,7 +32,8 @@ import java.io.File
  * explicitly, e.g. `am broadcast -n <package>/io.github.ivoryprd.shoten.debug.DebugTriggerReceiver`).
  *  - SHOW_SCREEN_LOOKUP opens the screen lookup without the assist gesture.
  *  - IMPORT_DICTIONARY imports the file at the "path" extra.
- *  - OCR_FILE runs text recognition on the image at the "path" extra and logs the result.
+ *  - OCR_FILE runs text recognition on the image at the "path" extra and logs the result (with
+ *    the "vertical" extra, as vertical text).
  *  - SNAPSHOT draws the app's windows in software and saves a PNG to the "path" extra (default:
  *    cache/snapshot.png) after the optional "delay" (ms). Useful where screencap returns black
  *    frames, as on emulators without GPU acceleration. Needs hidden API access:
@@ -65,9 +66,9 @@ class DebugTriggerReceiver : BroadcastReceiver() {
                             }
                         }
                         CoroutineScope(Dispatchers.Default).launch {
-                            val result = app.ocr.recognize(bitmap, OcrScript.JAPANESE)
+                            val result = app.ocr.recognize(bitmap, OcrScript.JAPANESE, intent.getBooleanExtra("vertical", false))
                             Log.i(TAG, "Converted: empty=${result.isEmpty} text=${result.fullText.replace('\n', '|')}")
-                            for (block in result.blocks) for (line in block.lines) Log.i(TAG, "converted '${line.text}' box=${line.box}")
+                            for (block in result.blocks) for (line in block.lines) Log.i(TAG, "converted '${line.text}' box=${line.box} vertical=${line.vertical}")
                         }
                     }
                     .addOnFailureListener { Log.e(TAG, "ML Kit failed", it) }
