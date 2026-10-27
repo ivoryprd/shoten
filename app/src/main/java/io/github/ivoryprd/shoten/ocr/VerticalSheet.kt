@@ -78,7 +78,7 @@ internal class VerticalSheet private constructor(val bitmap: Bitmap, private val
                 }
                 chunk.forEachIndexed { i, row -> chars.getValue(row.column) += read[i] }
             }
-            return chars.mapValues { VerticalLayout.fixVerticalForms(it.value) }
+            return chars.mapValues { (column, read) -> VerticalLayout.readColumn(column, read) }
         }
 
         /** Lays out [rows] (at most [ROWS], of at most [ROW_CELLS] cells) of [image] on a sheet. */
@@ -99,17 +99,30 @@ internal class VerticalSheet private constructor(val bitmap: Bitmap, private val
                 for (k in 0 until row.size) {
                     val cell = row.column.cells[row.from + k]
                     val scale = CELL / max(1f, cell.width)
+                    // Marks are drawn as in horizontal text: 、 and 。 from the upper right of the cell to
+                    // the lower left, ー turned back a quarter.
+                    val mark = row.column.marks[row.from + k]
+                    val moved = mark == "。" || mark == "、"
+                    val part = if (moved) Box(cell.centerX, cell.top, cell.right, cell.centerY) else cell
                     src.set(
-                        cell.left.toInt().coerceIn(0, image.width), cell.top.toInt().coerceIn(0, image.height),
-                        cell.right.toInt().coerceIn(0, image.width), cell.bottom.toInt().coerceIn(0, image.height),
+                        part.left.toInt().coerceIn(0, image.width), part.top.toInt().coerceIn(0, image.height),
+                        part.right.toInt().coerceIn(0, image.width), part.bottom.toInt().coerceIn(0, image.height),
                     )
                     if (src.isEmpty) continue
                     val left = PAD + k * CELL
+                    val y = top + if (moved) CELL / 2f else 0f
                     dst.set(
-                        left + (src.left - cell.left) * scale, top + (src.top - cell.top) * scale,
-                        left + (src.right - cell.left) * scale, top + (src.bottom - cell.top) * scale,
+                        left + (src.left - part.left) * scale, y + (src.top - part.top) * scale,
+                        left + (src.right - part.left) * scale, y + (src.bottom - part.top) * scale,
                     )
-                    canvas.drawBitmap(image, src, dst, paint)
+                    if (mark == "ー") {
+                        canvas.save()
+                        canvas.rotate(-90f, left + CELL / 2f, top + CELL / 2f)
+                        canvas.drawBitmap(image, src, dst, paint)
+                        canvas.restore()
+                    } else {
+                        canvas.drawBitmap(image, src, dst, paint)
+                    }
                 }
             }
             return VerticalSheet(bitmap, rows)

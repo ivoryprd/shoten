@@ -35,6 +35,26 @@ class VerticalLayoutTest {
             }
         }
 
+        /** The vertical forms of 。 (a ring) and 、 (a dot) in the upper right of the cell at ([x], [y]) of [size]. */
+        fun period(x: Int, y: Int, size: Int) {
+            val t = (size / 20).coerceAtLeast(2)
+            val l = x + size * 6 / 10
+            val top = y + size / 8
+            val d = size / 4
+            rect(l, top, l + d, top + t); rect(l, top + d - t, l + d, top + d); rect(l, top, l + t, top + d); rect(l + d - t, top, l + d, top + d)
+        }
+
+        fun comma(x: Int, y: Int, size: Int) = rect(x + size * 6 / 10, y + size / 8, x + size * 6 / 10 + size / 6, y + size / 8 + size / 5)
+
+        /** The vertical form of the long vowel mark: a bar down the middle of the cell. */
+        fun bar(x: Int, y: Int, size: Int) = rect(x + size / 2 - size / 20, y + size / 10, x + size / 2 + size / 20, y + size * 9 / 10)
+
+        /** ！: a bar and a dot. */
+        fun exclamation(x: Int, y: Int, size: Int) {
+            rect(x + size / 2 - size / 20, y + size / 10, x + size / 2 + size / 20, y + size * 6 / 10)
+            rect(x + size / 2 - size / 20, y + size * 3 / 4, x + size / 2 + size / 20, y + size * 85 / 100)
+        }
+
         /** A column of [count] characters, cells of [size] from ([x], [y]) down. */
         fun column(x: Int, y: Int, size: Int, count: Int, seed: Int = 0, color: Int = black) {
             for (i in 0 until count) glyph(x, y + i * size, size, i + seed, color)
@@ -108,6 +128,67 @@ class VerticalLayoutTest {
         assertEquals(2, columns.size)
         assertCells(columns[0], 150, 30, 40, 6)
         assertEquals(0xFF141828.toInt(), columns[0].background)
+    }
+
+    @Test
+    fun marksWithVerticalForms() {
+        // 私は。そこへ、行 in a column: punctuation where vertical text sets it.
+        val canvas = Canvas(300, 600)
+        for (i in listOf(0, 1, 3, 4, 6)) canvas.glyph(150, 40 + i * 40, 40, i)
+        canvas.period(150, 40 + 2 * 40, 40)
+        canvas.comma(150, 40 + 5 * 40, 40)
+        // コーヒー！ in the next one: long vowel marks are bars, unlike ！.
+        canvas.glyph(90, 40, 40, 0)
+        canvas.bar(90, 80, 40)
+        canvas.glyph(90, 120, 40, 2)
+        canvas.bar(90, 160, 40)
+        canvas.exclamation(90, 200, 40)
+        val columns = find(canvas, 37f).sortedByDescending { it.box.right }
+        assertEquals(2, columns.size)
+        assertCells(columns[0], 150, 40, 40, 7)
+        assertEquals(mapOf(2 to "。", 5 to "、"), columns[0].marks)
+        assertCells(columns[1], 90, 40, 40, 5)
+        assertEquals(mapOf(1 to "ー", 3 to "ー"), columns[1].marks)
+    }
+
+    @Test
+    fun horizontalTextBesideColumnsIsNotAColumn() {
+        // A short horizontal word beside the columns (a caption, a button) is no column of its own.
+        val canvas = Canvas(400, 500)
+        canvas.column(300, 40, 40, 9)
+        canvas.column(240, 40, 40, 7, seed = 1)
+        canvas.glyph(100, 300, 28, 0)
+        canvas.glyph(128, 300, 28, 2)
+        val columns = find(canvas, 45f).sortedByDescending { it.box.right }
+        assertEquals(2, columns.size)
+        assertCells(columns[0], 300, 40, 40, 9)
+        assertCells(columns[1], 240, 40, 40, 7)
+    }
+
+    @Test
+    fun marksArePutInWhereTheyWereMissedOrMisread() {
+        val cells = List(4) { Box(100f, 40f + it * 40, 140f, 80f + it * 40) }
+        val column = VerticalLayout.Column(Box(100f, 40f, 140f, 200f), cells, white, mapOf(1 to "。", 3 to "、"))
+        fun read(column: VerticalLayout.Column, vararg chars: Pair<Int, String>) =
+            VerticalLayout.readColumn(column, chars.map { (k, text) -> OcrChar(text, cells[k]) }).joinToString("") { it.text }
+        // Not read at all, or read as look-alikes.
+        assertEquals("す。そ、", read(column, 0 to "す", 2 to "そ"))
+        assertEquals("す。そ、", read(column, 0 to "す", 1 to "o", 2 to "そ", 3 to ","))
+        // Read as punctuation: the recognizer knows better than the shape.
+        assertEquals("す、そ。", read(column, 0 to "す", 1 to "、", 2 to "そ", 3 to "。"))
+        // Read as something else: a small character, say, that only looked like punctuation.
+        assertEquals("すっそ、", read(column, 0 to "す", 1 to "っ", 2 to "そ"))
+        // A mark carries the box of its cell.
+        assertEquals(cells[1], VerticalLayout.readColumn(column, emptyList())[0].box)
+
+        // Long vowel marks: read as a dash or the kanji 一, or not at all. At the end of the
+        // column, it stays one (other vertical forms make a horizontal ー there a bracket).
+        val coffee = VerticalLayout.Column(Box(100f, 40f, 140f, 200f), cells, white, mapOf(1 to "ー", 3 to "ー"))
+        assertEquals("コーヒー", read(coffee, 0 to "コ", 1 to "一", 2 to "ヒ", 3 to "ー"))
+        assertEquals("コーヒー", read(coffee, 0 to "コ", 2 to "ヒ", 3 to "-"))
+        // A bar read as a dash is one: ――.
+        assertEquals("そ――", read(coffee, 0 to "そ", 1 to "―", 3 to "―"))
+        assertEquals("コーヒ」", read(column = VerticalLayout.Column(column.box, cells, white), 0 to "コ", 1 to "|", 2 to "ヒ", 3 to "ー"))
     }
 
     @Test

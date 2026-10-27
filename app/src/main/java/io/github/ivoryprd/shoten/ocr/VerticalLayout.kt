@@ -18,8 +18,13 @@ import kotlin.math.roundToInt
  * (main text, furigana) share their pitch, which keeps short columns from being misjudged.
  */
 internal object VerticalLayout {
-    /** A column of vertical text: its ink, the boxes of its characters' cells (top to bottom), and the background color. */
-    class Column(val box: Box, val cells: List<Box>, val background: Int)
+    /**
+     * A column of vertical text: its ink, the boxes of its characters' cells (top to bottom), the
+     * background color, and the cells (by index) that hold nothing but a mark whose vertical
+     * form differs from the horizontal one: 、 and 。 (in the upper right of their cells instead
+     * of the lower left) and the long vowel mark ー (turned a quarter, a vertical bar).
+     */
+    class Column(val box: Box, val cells: List<Box>, val background: Int, val marks: Map<Int, String> = emptyMap())
 
     /** Where to look for vertical text, and the size of its characters (an em). */
     class Region(val left: Int, val top: Int, val right: Int, val bottom: Int, val em: Float) {
@@ -121,11 +126,14 @@ internal object VerticalLayout {
             }
         }
 
+        if (raw.isEmpty()) return emptyList()
         val columns = ArrayList<Column>()
         var mainPitch = 0f
         var mainWidth = 0
-        // The main text first: furigana's pitch is searched around half of the main text's.
-        for (group in groupByWidth(raw).reversed()) {
+        // The main text (the most of it) first: furigana's pitch is searched around half of the main text's.
+        val groups = groupByWidth(raw)
+        val main = groups.maxBy { group -> group.sumOf { it.rows.size } }
+        for (group in listOf(main) + groups.filter { it !== main }) {
             val width = group.first().width
             val furigana = mainPitch > 0f && width <= 0.7f * mainWidth
             val (pitch, phases) = refine(group, if (furigana) pitch(group, 0.42f * mainPitch, 0.62f * mainPitch) else pitch(group))
@@ -135,13 +143,21 @@ internal object VerticalLayout {
             }
             group.forEachIndexed { i, c ->
                 val tops = cellTops(c.rows, pitch, phases[i])
-                if (tops.isEmpty() || !looksLikeText(c, tops, pitch)) return@forEachIndexed
+                // A single character (but furigana) is left to the recognizer: it could as well
+                // be a piece of horizontal text.
+                if (tops.isEmpty() || tops.size == 1 && !furigana) return@forEachIndexed
+                val marks = HashMap<Int, String>()
+                tops.forEachIndexed { k, y ->
+                    markIn(ink.mask, w, h, (c.x0 + c.x1) / 2f - pitch / 2, c.y0 + y, pitch)?.let { marks[k] = it }
+                }
+                if (!looksLikeText(c, tops, pitch, marks.size)) return@forEachIndexed
                 val cx = region.left + (c.x0 + c.x1) / 2f
                 val top = region.top + c.y0
                 columns += Column(
                     Box(region.left + c.x0.toFloat(), top.toFloat(), region.left + c.x1.toFloat(), (top + c.rows.size).toFloat()),
                     tops.map { y -> Box(cx - pitch / 2, top + y, cx + pitch / 2, top + y + pitch) },
                     ink.background,
+                    marks,
                 )
             }
         }
@@ -184,9 +200,10 @@ internal object VerticalLayout {
 
     /**
      * Whether a column's ink looks like characters: in at least half its cells the ink reaches
-     * across half the column, unlike a stroke of a drawing (a speech bubble's outline, say).
+     * across half the column (or the cell holds a mark, one of the [marks] cells), unlike a
+     * stroke of a drawing (a speech bubble's outline, say).
      */
-    private fun looksLikeText(c: RawColumn, tops: List<Float>, pitch: Float): Boolean {
+    private fun looksLikeText(c: RawColumn, tops: List<Float>, pitch: Float, marks: Int): Boolean {
         val width = c.width
         var wide = 0
         for (top in tops) {
@@ -196,7 +213,7 @@ internal object VerticalLayout {
             for (y in from until to) span = max(span, c.spans[y])
             if (span >= width / 2) wide++
         }
-        return wide * 2 >= tops.size
+        return (wide + marks) * 2 >= tops.size
     }
 
     /**
@@ -204,9 +221,11 @@ internal object VerticalLayout {
      * takes for something else because their vertical forms are turned or moved: the long vowel
      * mark (a vertical bar), the ellipsis (a column of dots) and corner brackets (turned a
      * quarter, and read as Latin letters or, at the ends of a column, as a horizontal long vowel
-     * mark, which a column can't contain: its long vowel marks are vertical).
+     * mark, which a column can't contain: its long vowel marks are vertical). Characters at
+     * the indices in [keep] are left as they are.
      */
-    fun fixVerticalForms(chars: List<OcrChar>): List<OcrChar> = chars.mapIndexed { i, c ->
+    fun fixVerticalForms(chars: List<OcrChar>, keep: Set<Int> = emptySet()): List<OcrChar> = chars.mapIndexed { i, c ->
+        if (i in keep) return@mapIndexed c
         val first = i == 0 && isCjkAt(chars, 1)
         val last = i == chars.lastIndex && isCjkAt(chars, i - 1)
         val fixed = when (c.text) {
@@ -220,6 +239,37 @@ internal object VerticalLayout {
         if (fixed == c.text) c else OcrChar(fixed, c.box)
     }
 
+    /**
+     * The text of [column] from what the recognizer read in its cells ([read], with the boxes of
+     * their cells): the marks found in the cells ([Column.marks]) where it read nothing (it
+     * misses small marks) or a look-alike ("o" for 。, say), and other vertical forms fixed.
+     */
+    fun readColumn(column: Column, read: List<OcrChar>): List<OcrChar> {
+        val cellOf = column.cells.withIndex().associate { (i, box) -> box to i }
+        val byCell = read.groupBy { ch -> ch.box?.let { cellOf[it] } ?: -1 }
+        val chars = ArrayList(byCell[-1].orEmpty())
+        val marked = HashSet<Int>()
+        for (k in column.cells.indices) {
+            val inCell = byCell[k].orEmpty()
+            val mark = column.marks[k]
+            if (mark != null && inCell.all { it.text in LOOKALIKES.getValue(mark) }) {
+                marked += chars.size
+                chars += OcrChar(mark, column.cells[k])
+            } else {
+                chars += inCell
+            }
+        }
+        return fixVerticalForms(chars, keep = marked)
+    }
+
+    /**
+     * What the marks may be read as. Marks read as other marks are left as read: the recognizer
+     * knows 、 from 。 better than their shapes tell, and a bar may be a dash (――) after all.
+     */
+    private val LOOKALIKES = setOf(".", ",", "'", "`", "°", "o", "O", "0", "゜", "・", "･", "｡", "､", "，", "．").let { dots ->
+        mapOf("。" to dots, "、" to dots, "ー" to setOf("ー", "一", "-", "−", "‐", "－", "_"))
+    }
+
     private fun isCjkAt(chars: List<OcrChar>, i: Int): Boolean {
         val cp = chars.getOrNull(i)?.text?.codePointAt(0) ?: return false
         return cp >= 0x3000
@@ -231,6 +281,82 @@ internal object VerticalLayout {
     private val CLOSING = setOf("r", "L", "└")
 
     private class Ink(val mask: BooleanArray, val background: Int)
+
+    /**
+     * The mark in the cell of [size] at ([left], [top]) of a column if that is all the cell holds
+     * (see [Column.marks]): 、 or 。 in the upper right (。 is told from 、 by its hole), or a long
+     * vowel mark, an unbroken thin bar down the middle (unlike ！ or ︙, which are broken).
+     */
+    private fun markIn(mask: BooleanArray, w: Int, h: Int, left: Float, top: Float, size: Float): String? {
+        val x0 = left.roundToInt().coerceIn(0, w)
+        val x1 = (left + size).roundToInt().coerceIn(0, w)
+        val y0 = top.roundToInt().coerceIn(0, h)
+        val y1 = (top + size).roundToInt().coerceIn(0, h)
+        var minX = Int.MAX_VALUE
+        var minY = Int.MAX_VALUE
+        var maxX = -1
+        var maxY = -1
+        for (y in y0 until y1) for (x in x0 until x1) if (mask[y * w + x]) {
+            minX = min(minX, x)
+            minY = min(minY, y)
+            maxX = max(maxX, x)
+            maxY = max(maxY, y)
+        }
+        if (maxX < 0) return null
+        val width = maxX - minX + 1
+        val height = maxY - minY + 1
+        // About as wide as high, in the upper right, and more than a speck.
+        if (minX >= left + 0.45f * size && maxY <= top + 0.55f * size && max(width, height) >= 0.12f * size &&
+            max(width, height) <= 2 * min(width, height) + 1
+        ) {
+            return if (hasHole(mask, w, h, minX, minY, maxX, maxY)) "。" else "、"
+        }
+        if (width <= 0.16f * size && height >= 0.45f * size && abs((minX + maxX + 1) / 2f - (left + size / 2)) <= 0.2f * size &&
+            (minY..maxY).all { y -> (minX..maxX).any { x -> mask[y * w + x] } }
+        ) {
+            return "ー"
+        }
+        return null
+    }
+
+    /** Whether the ink within the box from ([x0], [y0]) to ([x1], [y1]) (inclusive) encloses background. */
+    private fun hasHole(mask: BooleanArray, w: Int, h: Int, x0: Int, y0: Int, x1: Int, y1: Int): Boolean {
+        // Fill the background from around the box; background left unreached is enclosed.
+        val left = max(0, x0 - 1)
+        val top = max(0, y0 - 1)
+        val bw = min(w - 1, x1 + 1) - left + 1
+        val bh = min(h - 1, y1 + 1) - top + 1
+        val reached = BooleanArray(bw * bh)
+        val queue = ArrayDeque<Int>()
+        fun visit(x: Int, y: Int) {
+            if (x < 0 || y < 0 || x >= bw || y >= bh) return
+            val i = y * bw + x
+            if (reached[i] || mask[(top + y) * w + left + x]) return
+            reached[i] = true
+            queue.addLast(i)
+        }
+        for (x in 0 until bw) {
+            visit(x, 0)
+            visit(x, bh - 1)
+        }
+        for (y in 0 until bh) {
+            visit(0, y)
+            visit(bw - 1, y)
+        }
+        while (queue.isNotEmpty()) {
+            val i = queue.removeFirst()
+            val x = i % bw
+            val y = i / bw
+            visit(x - 1, y)
+            visit(x + 1, y)
+            visit(x, y - 1)
+            visit(x, y + 1)
+        }
+        for (y in 0 until bh) for (x in 0 until bw) {
+            if (!reached[y * bw + x] && !mask[(top + y) * w + left + x]) return true
+        }
+        return false
+    }
 
     /**
      * Pixels that stand out from the background: the most common brightness. The threshold is

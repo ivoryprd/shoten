@@ -63,6 +63,45 @@ class VerticalSheetTest {
     }
 
     @Test
+    fun punctuationMovesToTheLowerLeftOfItsCell() {
+        // A cell with something in its upper right only, where vertical text sets 。.
+        val image = Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888)
+        Canvas(image).apply {
+            drawColor(Color.WHITE)
+            drawRect(120f, 50f, 140f, 70f, Paint().apply { color = Color.RED })
+        }
+        val cells = listOf(Box(100f, 50f, 140f, 90f), Box(100f, 90f, 140f, 130f))
+        val column = VerticalLayout.Column(Box(100f, 50f, 140f, 130f), cells, Color.WHITE, mapOf(0 to "。"))
+        val sheet = VerticalSheet.create(image, whole(column))
+        // On the sheet it is where horizontal text has it: in the lower left.
+        assertEquals(Color.RED, sheet.bitmap.getPixel(30 + VerticalSheet.CELL / 4, 30 + VerticalSheet.CELL * 3 / 4))
+        assertEquals(Color.WHITE, sheet.bitmap.getPixel(30 + VerticalSheet.CELL * 3 / 4, 30 + VerticalSheet.CELL / 4))
+        // If the recognizer misses it anyway, it is put in.
+        val read = runBlocking { VerticalSheet.read(image, listOf(column)) { OcrResult(emptyList(), it.width, it.height) } }
+        assertEquals("。", read.getValue(column).joinToString("") { it.text })
+    }
+
+    @Test
+    fun longVowelMarksAreTurnedBack() {
+        // A vertical bar down the middle of the cell: the long vowel mark in vertical text.
+        val image = Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888)
+        Canvas(image).apply {
+            drawColor(Color.WHITE)
+            drawRect(116f, 54f, 124f, 86f, Paint().apply { color = Color.RED })
+        }
+        val cells = listOf(Box(100f, 50f, 140f, 90f))
+        val column = VerticalLayout.Column(cells[0], cells, Color.WHITE, mapOf(0 to "ー"))
+        val sheet = VerticalSheet.create(image, whole(column))
+        // On the sheet it is a horizontal bar across the middle of the cell.
+        val c = 30 + VerticalSheet.CELL / 2
+        val d = VerticalSheet.CELL / 3
+        assertEquals(Color.RED, sheet.bitmap.getPixel(c - d, c))
+        assertEquals(Color.RED, sheet.bitmap.getPixel(c + d, c))
+        assertEquals(Color.WHITE, sheet.bitmap.getPixel(c, c - d))
+        assertEquals(Color.WHITE, sheet.bitmap.getPixel(c, c + d))
+    }
+
+    @Test
     fun longColumnsTakeSeveralRowsAndSheets() {
         // A short column, then columns longer than a row: 1 + 8 * 2 rows, more than a sheet holds,
         // so the last column starts on the first sheet and ends on the second.
