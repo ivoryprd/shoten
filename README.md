@@ -20,7 +20,7 @@ on-device, and tapping or sliding over a word shows its dictionary entry.
   sentences, cross references, spelling tables, images) is rendered natively.
 - **Also works without the assistant**: select text in any app and choose *Look up in Shoten*, share a
   screenshot or image to Shoten, or use the search box in the app.
-- **Lightweight**: no AndroidX, no WebView, no Compose. The standard APK is under 1 MB; lookups take a
+- **Lightweight**: no AndroidX, no WebView, no Compose. The standard APK is about 1.2 MB; lookups take a
   few milliseconds; OCR models are released from memory a few minutes after use.
 
 ## Installing

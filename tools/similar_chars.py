@@ -26,8 +26,8 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 KANJI = 3000     # most common kanji
 HANZI = 5000     # most common hanzi (simplified and traditional)
-NEIGHBORS = 8    # visual neighbors per character
-CAP = 12         # most characters in a list
+NEIGHBORS = 6    # visual neighbors per character
+CAP = 10         # most characters in a list
 
 SIZE_PAIRS = 'ぁあ ぃい ぅう ぇえ ぉお っつ ゃや ゅゆ ょよ ゎわ ゕか ゖけ ァア ィイ ゥウ ェエ ォオ ッツ ャヤ ュユ ョヨ ヮワ ヵカ ヶケ'
 VOICED = ('かが きぎ くぐ けげ こご さざ しじ すず せぜ そぞ ただ ちぢ つづ てで とど はばぱ ひびぴ ふぶぷ へべぺ ほぼぽ うゔ '
