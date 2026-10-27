@@ -71,6 +71,14 @@ class OcrResult(val blocks: List<OcrBlock>, val width: Int, val height: Int) {
 
     fun lineAt(p: CharPosition): OcrLine? = blocks.getOrNull(p.block)?.lines?.getOrNull(p.line)
 
+    private fun lineAt(ref: LineRef): OcrLine? = blocks.getOrNull(ref.block)?.lines?.getOrNull(ref.line)
+
+    /** For every line, the line its text continues on when it wraps (see [TextFlow]). */
+    private val successors: Map<LineRef, LineRef> by lazy { TextFlow.successors(blocks) }
+
+    /** The line whose text continues [line]'s text (the next line of a wrapped paragraph), or null. */
+    fun nextLine(line: LineRef): LineRef? = successors[line]
+
     /**
      * Finds the character at (x, y) in image coordinates. Characters within [slop] count as hits;
      * inside a line's box the nearest character is returned.
@@ -98,26 +106,32 @@ class OcrResult(val blocks: List<OcrBlock>, val width: Int, val height: Int) {
     }
 
     /**
-     * The text from [start] to the end of its block (lines are joined without separators, which
-     * suits Chinese and Japanese), limited to [maxChars] characters.
+     * The text from [start] on, continuing on the next lines where the text wraps (see [nextLine]),
+     * limited to [maxChars] characters. Lines are joined without a separator, which suits Chinese
+     * and Japanese; Latin words get a space between them.
      */
     fun scanText(start: CharPosition, maxChars: Int): ScanText {
-        val block = blocks.getOrNull(start.block) ?: return ScanText("", emptyList(), IntArray(0))
+        var ref = LineRef(start.block, start.line)
+        var line = lineAt(ref) ?: return ScanText("", emptyList(), IntArray(0))
         val sb = StringBuilder()
         val positions = ArrayList<CharPosition>()
         val offsets = ArrayList<Int>()
-        var li = start.line
+        val visited = hashSetOf(ref)
         var ci = start.char
-        while (li < block.lines.size && positions.size < maxChars) {
-            val line = block.lines[li]
+        while (positions.size < maxChars) {
             if (ci >= line.chars.size) {
-                li++
+                val next = successors[ref]?.takeIf { visited.add(it) } ?: break
+                line = lineAt(next) ?: break
+                ref = next
                 ci = 0
+                val last = sb.lastOrNull()
+                val first = line.text.firstOrNull()
+                if (last != null && first != null && isSpaced(last) && isSpaced(first)) sb.append(' ')
                 continue
             }
             val ch = line.chars[ci]
             offsets.add(sb.length)
-            positions.add(CharPosition(start.block, li, ci))
+            positions.add(CharPosition(ref.block, ref.line, ci))
             sb.append(ch.text)
             ci++
         }
