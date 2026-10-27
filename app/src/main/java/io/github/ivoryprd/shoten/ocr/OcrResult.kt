@@ -308,7 +308,23 @@ class OcrResult(val blocks: List<OcrBlock>, val width: Int, val height: Int) {
                 }
                 out.add(if (text.length == 1) OcrChar(Cjk.halfWidthKanaToFull(text[0]).toString(), ch.box) else ch)
             }
-            return out
+            return fixHe(out)
         }
+
+        /**
+         * へ, べ and ぺ look the same in hiragana and katakana, so the recognizer's choice is a
+         * guess: they are made hiragana between hiragana (べんきょう, not ベんきょう) and katakana
+         * between katakana. Next to anything else, they stay as read.
+         */
+        internal fun fixHe(chars: List<OcrChar>): List<OcrChar> = chars.mapIndexed { i, c ->
+            val other = HE[c.text] ?: return@mapIndexed c
+            val neighbors = listOfNotNull(chars.getOrNull(i - 1), chars.getOrNull(i + 1)).mapNotNull { it.text.singleOrNull() }
+            val hiragana = neighbors.count { Cjk.isHiragana(it.code) }
+            val katakana = neighbors.count { Cjk.isKatakana(it.code) || it == 'ー' }
+            val toHiragana = Cjk.isKatakana(c.text[0].code)
+            if ((toHiragana && hiragana > 0 && katakana == 0) || (!toHiragana && katakana > 0 && hiragana == 0)) OcrChar(other, c.box) else c
+        }
+
+        private val HE = mapOf("へ" to "ヘ", "べ" to "ベ", "ぺ" to "ペ", "ヘ" to "へ", "ベ" to "べ", "ペ" to "ぺ")
     }
 }

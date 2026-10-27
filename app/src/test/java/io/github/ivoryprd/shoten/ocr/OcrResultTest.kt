@@ -163,4 +163,17 @@ class OcrResultTest {
         assertTrue(corrected.blocks[0].lines[0].vertical)
         assertEquals("今", corrected.blocks[0].lines[0].text)
     }
+
+    @Test
+    fun heIsHiraganaOrKatakanaByItsNeighbors() {
+        fun fix(text: String) = OcrResult.fixHe(text.map { OcrChar(it.toString(), null) }).joinToString("") { it.text }
+        assertEquals("べんきょう", fix("ベんきょう"))
+        assertEquals("ヘリコプター", fix("へリコプター"))
+        assertEquals("ベース", fix("べース"))
+        // Next to kanji only, or to both kinds of kana: as read.
+        assertEquals("東ヘ行く", fix("東ヘ行く"))
+        assertEquals("東へ行く", fix("東へ行く"))
+        assertEquals("あベン", fix("あベン"))
+        assertEquals("ペン", fix("ぺン"))
+    }
 }

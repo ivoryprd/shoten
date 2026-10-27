@@ -327,7 +327,7 @@ internal object VerticalLayout {
                 chars += if (ink == null || usual == null) read else read.map { sized(it, column.cells[k], ink, usual) }
             }
         }
-        return fixVerticalForms(chars, keep = marked)
+        return OcrResult.fixHe(fixVerticalForms(chars, keep = marked))
     }
 
     /** How far the [ink] in a [cell] reaches, across or down, relative to the cell. */
