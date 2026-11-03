@@ -58,12 +58,16 @@ class ShotenSession(context: Context) : VoiceInteractionSession(context), Screen
 
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
-        if (shown) {
+        if (shown && view?.isShown == true) {
             // The assist gesture was used again while Shoten is open: close it. (The screenshot
             // taken for this request would show Shoten itself.)
             hide()
             return
         }
+        // The system calls onHide() only for a window it had shown; if it was hidden otherwise,
+        // this session never heard of it. Start afresh rather than taking this for a second use.
+        if (shown) Log.w(TAG, "Shown again without having been hidden")
+        handler.removeCallbacks(screenshotTimeout)
         configureWindow()
         if (view == null || viewUsed) {
             view?.release()

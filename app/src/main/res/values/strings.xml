@@ -110,6 +110,8 @@
     <string name="updates_failed">Couldn’t check for updates. Are you offline?</string>
     <string name="dictionary_update_available">Update available: %1$s</string>
     <string name="setup_updates_available">Dictionary updates are available.</string>
+    <string name="status_ocr_slow">Reading the text is taking unusually long.</string>
+    <string name="action_try_again">Try again</string>
     <string name="action_copy_all">Copy all text</string>
     <string name="action_correct_text">Correct the text</string>
     <string name="action_delete_character">Delete the character</string>

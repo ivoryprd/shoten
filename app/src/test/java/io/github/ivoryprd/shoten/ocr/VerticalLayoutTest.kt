@@ -264,24 +264,41 @@ class VerticalLayoutTest {
     }
 
     @Test
-    fun smallKanaAreToldByTheirInk() {
-        // As measured in a real column: characters reach across 0.79 to 0.91 of their cells, っ
-        // 0.66, a bit right of the middle. One more small character, in the middle of its cell.
-        val cells = List(6) { Box(100f, 40f + it * 40, 140f, 80f + it * 40) }
-        fun ink(k: Int, extent: Float, right: Float) = cells[k].let { c ->
-            val half = extent * 40 / 2
-            Box(c.left + right * 40 - half, c.centerY - half, c.left + right * 40 + half, c.centerY + half)
-        }
-        val inks = listOf(ink(0, 0.91f, 0.5f), ink(1, 0.66f, 0.58f), ink(2, 0.79f, 0.48f), ink(3, 0.85f, 0.47f), ink(4, 0.64f, 0.48f), ink(5, 0.85f, 0.5f))
-        val column = VerticalLayout.Column(Box(100f, 40f, 140f, 280f), cells, white, inks = inks)
-        fun read(vararg texts: String) =
-            VerticalLayout.readColumn(column, texts.mapIndexed { k, t -> OcrChar(t, cells[k]) }).joinToString("") { it.text }
-        // The recognizer took the small kana for a full-size one, and the other way round.
-        assertEquals("待ってくれる", read("待", "つ", "て", "く", "れ", "る"))
-        assertEquals("待ってつれる", read("待", "っ", "て", "っ", "れ", "る"))
-        // Small but in the middle of its cell (not a small kana's place): as read.
-        assertEquals("あっこよやわ", read("あ", "っ", "こ", "よ", "や", "わ"))
-        assertEquals("あっこよゃわ", read("あ", "っ", "こ", "よ", "ゃ", "わ"))
+    fun screentoneIsToldFromPlainText() {
+        val plain = Canvas(300, 400)
+        plain.column(150, 30, 40, 6)
+        plain.column(90, 30, 40, 5, seed = 1)
+        assertFalse(find(plain, 37f).first().contrast.textured)
+        // The same on gray dots.
+        val tone = Canvas(300, 400)
+        for (y in 0 until 400 step 4) for (x in 0 until 300 step 4) tone.rect(x, y, x + 2, y + 2, 0xFF969696.toInt())
+        tone.column(150, 30, 40, 6)
+        tone.column(90, 30, 40, 5, seed = 1)
+        assertTrue(find(tone, 37f).first().contrast.textured)
+    }
+
+    @Test
+    fun bothReadingsAreMerged() {
+        val cells = List(5) { Box(100f, 40f + it * 40, 140f, 80f + it * 40) }
+        val column = VerticalLayout.Column(Box(100f, 40f, 140f, 240f), cells, white, marks = mapOf(4 to "。"))
+        val sheet = listOf("待", "つ", "天", "く", "。").mapIndexed { k, t -> OcrChar(t, cells[k]) }
+        // What the cells look like, for the judge: the native reading got 大 wrong, the sheet っ.
+        val truth = listOf("待", "っ", "天", "く", "。")
+        val asked = ArrayList<List<String>>()
+        fun merge(native: Map<Int, String>) = VerticalLayout.merge(column, sheet, native) { k, candidates ->
+            asked += candidates
+            if (truth[k] in candidates) truth[k] else candidates.first()
+        }.joinToString("") { it.text }
+        assertEquals("待っ天く。", merge(mapOf(0 to "待", 1 to "っ", 2 to "大", 3 to "く", 4 to "o")))
+        // Asked only where they differ (and for kana that have a small form), the native reading first.
+        assertTrue(listOf("っ", "つ") in asked && listOf("大", "天") in asked)
+        assertTrue(asked.none { "待" in it || "く" in it })
+        // The mark in cell 4 isn't questioned.
+        assertTrue(asked.none { "o" in it })
+        // Without a native reading: the sheet's (small kana still told by the image).
+        assertEquals("待っ天く。", merge(emptyMap()))
+        // What only the native reading has is taken.
+        assertEquals("待っ天く。", VerticalLayout.merge(column, sheet.filterIndexed { k, _ -> k != 2 }, mapOf(2 to "天")) { k, c -> if (truth[k] in c) truth[k] else c.first() }.joinToString("") { it.text })
     }
 
     @Test

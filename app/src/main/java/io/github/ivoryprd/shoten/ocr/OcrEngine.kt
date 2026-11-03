@@ -14,7 +14,10 @@ import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
 import io.github.ivoryprd.shoten.Prefs
+import io.github.ivoryprd.shoten.lookup.Language
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.EnumMap
 import java.util.concurrent.Executors
@@ -60,8 +63,9 @@ class OcrEngine(private val prefs: Prefs) {
             try {
                 val start = System.nanoTime()
                 val text = process(input, script)
+                currentCoroutineContext().ensureActive()
                 Log.d(TAG, "$script OCR of ${bitmap.width}x${bitmap.height}: ${text.textBlocks.size} blocks in ${(System.nanoTime() - start) / 1_000_000} ms")
-                val result = convert(text, bitmap.width, bitmap.height)
+                val result = fitChars(convert(text, bitmap.width, bitmap.height), input)
                 if (!vertical) return result
                 return try {
                     readVertical(input, result, script)
@@ -111,6 +115,7 @@ class OcrEngine(private val prefs: Prefs) {
             var region = start
             var columns = columnsIn(region)
             // Columns cut off at the region's edges, or more beyond: look further.
+            currentCoroutineContext().ensureActive()
             for (i in 0 until GROW_REGIONS) {
                 region = VerticalLayout.grown(region, columns, image.width, image.height) ?: break
                 columns = columnsIn(region)
@@ -120,6 +125,7 @@ class OcrEngine(private val prefs: Prefs) {
             if (fresh.isNotEmpty()) found += fresh
         }
         if (found.isEmpty()) return first
+        currentCoroutineContext().ensureActive()
 
         val read = VerticalSheet.read(image, found.flatten()) { sheet ->
             convert(process(sheet, script), sheet.width, sheet.height)
@@ -129,9 +135,14 @@ class OcrEngine(private val prefs: Prefs) {
         val blocks = ArrayList<OcrBlock>()
         val replaced = ArrayList<VerticalLayout.Column>()
         var regions = 0
+        val judge = Judge(image, if (script == OcrScript.CHINESE) Language.CHINESE else Language.JAPANESE)
+        val nativeColumns = firstLines.filter { it.vertical }
         for (columns in found) {
             val lines = columns.sortedByDescending { it.box.right }.mapNotNull { column ->
-                read[column]?.takeIf { it.isNotEmpty() }?.let { OcrLine(it, column.box, forceVertical = true) }
+                val merged = VerticalLayout.merge(column, read[column].orEmpty(), nativeByCell(nativeColumns, column)) { k, candidates ->
+                    judge.best(column.cells[k], candidates)
+                }
+                merged.takeIf { it.isNotEmpty() }?.let { OcrLine(it, column.box, forceVertical = true) }
             }
             val before = firstLines.filter { coveredBy(columns, it) }.sumOf { l -> l.chars.count { it.text.isNotBlank() } }
             if (lines.isNotEmpty() && lines.sumOf { it.chars.size } * 2 >= before) {
@@ -146,6 +157,70 @@ class OcrEngine(private val prefs: Prefs) {
         }
         Log.d(TAG, "Vertical text: ${found.sumOf { it.size }} columns in $regions of ${found.size} regions in ${(System.nanoTime() - start) / 1_000_000} ms")
         return OcrResult(blocks, first.width, first.height)
+    }
+
+    /** [result] with its characters' boxes fitted to the ink in [image] ([CharFit]). */
+    private fun fitChars(result: OcrResult, image: Bitmap): OcrResult = OcrResult(
+        result.blocks.map { block -> OcrBlock(block.lines.map { fitLine(it, image) }) },
+        result.width,
+        result.height,
+    )
+
+    private fun fitLine(line: OcrLine, image: Bitmap): OcrLine {
+        val box = line.box ?: return line
+        // Room along the line for characters reaching past its box.
+        val room = 0.6f * if (line.vertical) box.width else box.height
+        val left = (box.left - if (line.vertical) 0f else room).toInt().coerceIn(0, image.width)
+        val top = (box.top - if (line.vertical) room else 0f).toInt().coerceIn(0, image.height)
+        val right = kotlin.math.ceil(box.right + if (line.vertical) 0f else room).toInt().coerceIn(0, image.width)
+        val bottom = kotlin.math.ceil(box.bottom + if (line.vertical) room else 0f).toInt().coerceIn(0, image.height)
+        if (right - left < 3 || bottom - top < 3) return line
+        return try {
+            val pixels = IntArray((right - left) * (bottom - top))
+            image.getPixels(pixels, 0, right - left, left, top, right - left, bottom - top)
+            CharFit.fit(line, pixels, right - left, bottom - top, left, top)
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "Fitting characters failed", e)
+            line
+        }
+    }
+
+    /** The characters of the recognizer's own vertical [lines] in each cell of [column] (by where they are). */
+    private fun nativeByCell(lines: List<OcrLine>, column: VerticalLayout.Column): Map<Int, String> {
+        val pitch = column.cells.first().height
+        val out = HashMap<Int, StringBuilder>()
+        for (line in lines) for (c in line.chars) {
+            val box = c.box ?: continue
+            if (c.text.isBlank() || box.centerX < column.box.left - 0.2f * pitch || box.centerX > column.box.right + 0.2f * pitch) continue
+            val k = column.cells.indexOfFirst { box.centerY >= it.top && box.centerY < it.bottom }
+            if (k >= 0) out.getOrPut(k) { StringBuilder() }.append(c.text)
+        }
+        return out.mapValues { it.value.toString() }
+    }
+
+    /**
+     * Picks, of characters read in a cell of [image], the one that looks most like what is there:
+     * the cell is compared with them as the system font draws them (in their vertical forms).
+     */
+    private inner class Judge(private val image: Bitmap, private val language: Language) {
+        private val cells = HashMap<Box, FloatArray?>()
+
+        fun best(cell: Box, candidates: List<String>): String {
+            val ink = cells.getOrPut(cell) { CharSuggestions.cellOf(image, cell)?.let(GlyphFeatures::of) } ?: return candidates.first()
+            val scores = candidates.map { GlyphFeatures.similarity(ink, glyph(it)) }
+            val best = scores.indices.maxBy { scores[it] }
+            // The first one unless another looks clearly more like it.
+            return if (scores[best] > scores[0] + JUDGE_MARGIN) candidates[best] else candidates[0]
+        }
+
+        private fun glyph(text: String): FloatArray = synchronized(glyphs) {
+            glyphs.getOrPut("${language.code}:$text") { GlyphFeatures.of(renderer.ink(text, language, vertical = true)) }
+        }
+    }
+
+    private val renderer by lazy { GlyphRenderer() }
+    private val glyphs = object : LinkedHashMap<String, FloatArray>(128, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, FloatArray>) = size > 512
     }
 
     /**
@@ -173,11 +248,12 @@ class OcrEngine(private val prefs: Prefs) {
 
     /** Releases all models (e.g. when the system is low on memory). */
     fun release() {
-        synchronized(this) {
+        val closing = synchronized(this) {
             if (active > 0) return
-            recognizers.values.forEach { it.close() }
-            recognizers.clear()
+            recognizers.values.toList().also { recognizers.clear() }
         }
+        // Not holding the lock: closing can wait for the recognizer's own threads.
+        closing.forEach { runCatching { it.close() } }
     }
 
     private fun begin() {
@@ -222,6 +298,9 @@ class OcrEngine(private val prefs: Prefs) {
 
         /** How many times a region of vertical text grows to take in columns beyond its edges. */
         private const val GROW_REGIONS = 4
+
+        /** How much more alike a character must look than the first one read to be taken instead. */
+        private const val JUDGE_MARGIN = 0.02f
         private val WARM_UP_EXECUTOR = Executors.newSingleThreadExecutor()
     }
 }

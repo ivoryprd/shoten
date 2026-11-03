@@ -5,6 +5,8 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
@@ -71,6 +73,7 @@ internal class VerticalSheet private constructor(val bitmap: Bitmap, private val
             }
             val chars = columns.associateWith { ArrayList<OcrChar>() }
             for (chunk in rows.chunked(ROWS)) {
+                currentCoroutineContext().ensureActive()
                 val sheet = create(image, chunk)
                 val read = try {
                     sheet.mapBack(recognize(sheet.bitmap))

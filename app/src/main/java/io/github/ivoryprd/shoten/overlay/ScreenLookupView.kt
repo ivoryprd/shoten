@@ -294,6 +294,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
 
     fun release() {
         released = true
+        removeCallbacks(ocrTimeout)
         lookups.cancel()
         ocrJob?.cancel()
         scope.cancel()
@@ -331,19 +332,24 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         showStatus(context.getString(R.string.status_reading))
         screenshot.startScanning()
         ocrJob?.cancel()
+        removeCallbacks(ocrTimeout)
+        postDelayed(ocrTimeout, OCR_TIMEOUT)
         ocrJob = scope.launch {
             val result = try {
                 withContext(Dispatchers.Default) { app.ocr.recognize(bitmap, script, vertical) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: OcrModelUnavailableException) {
+                removeCallbacks(ocrTimeout)
                 onModelMissing(script)
                 return@launch
             } catch (e: Exception) {
+                removeCallbacks(ocrTimeout)
                 screenshot.stopScanning()
                 showStatus(context.getString(R.string.status_ocr_failed, e.message ?: e.javaClass.simpleName))
                 return@launch
             }
+            removeCallbacks(ocrTimeout)
             ocrResults[key] = result
             // Automatic mode: Japanese text nearly always contains kana. Without any, the text is
             // probably Chinese, so try the Chinese recognizer if Chinese dictionaries are installed.
@@ -356,6 +362,15 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
                 return@launch
             }
             onOcrResult(result)
+        }
+    }
+
+    /** Recognition taking far longer than it should: say so rather than glow on and on. */
+    private val ocrTimeout = Runnable {
+        Log.w(TAG, "Text recognition is taking too long")
+        showStatus(context.getString(R.string.status_ocr_slow), context.getString(R.string.action_try_again)) {
+            ocrJob?.cancel()
+            runOcr(firstPass = false)
         }
     }
 
@@ -828,6 +843,9 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
     companion object {
         private const val TAG = "ScreenLookup"
         private const val MAX_SCAN_CHARS = 24
+
+        /** How long recognition may take before the user is told (it takes a few seconds at most). */
+        private const val OCR_TIMEOUT = 40_000L
 
         /** How many characters of the scanned text can be corrected. */
         private const val CORRECTION_CHARS = 12

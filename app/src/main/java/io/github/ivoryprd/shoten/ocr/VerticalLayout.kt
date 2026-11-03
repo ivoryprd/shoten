@@ -1,5 +1,6 @@
 package io.github.ivoryprd.shoten.ocr
 
+import io.github.ivoryprd.shoten.util.Cjk
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
@@ -37,9 +38,10 @@ internal object VerticalLayout {
     /**
      * How much the ink of a column stands out from its background in brightness: at least
      * [threshold] (screentone and other faint patterns stay below it), [strong] for its strongest
-     * strokes.
+     * strokes. [textured] if there is a pattern around the ink (screentone, say): faint pixels
+     * away from any ink.
      */
-    class Contrast(val threshold: Int, val strong: Int) {
+    class Contrast(val threshold: Int, val strong: Int, val textured: Boolean = true) {
         companion object {
             val DEFAULT = Contrast(48, 255)
         }
@@ -52,6 +54,8 @@ internal object VerticalLayout {
      * stays readable); between faint and strong, it fades into the background.
      */
     fun clean(pixels: IntArray, background: Int, contrast: Contrast): IntArray {
+        // Plain text stays as it is: thin strokes (of Mincho fonts, say) are faint too.
+        if (!contrast.textured) return IntArray(pixels.size) { i -> luminance(pixels[i]).let { l -> (0xFF shl 24) or (l shl 16) or (l shl 8) or l } }
         val bg = luminance(background)
         val from = 0.8f * contrast.threshold
         val to = max(from + 1f, (contrast.threshold + contrast.strong) / 2f)
@@ -310,9 +314,6 @@ internal object VerticalLayout {
         val byCell = read.groupBy { ch -> ch.box?.let { cellOf[it] } ?: -1 }
         val chars = ArrayList(byCell[-1].orEmpty())
         val marked = HashSet<Int>()
-        // The size of the column's characters: the median of their ink's.
-        val extents = column.cells.indices.mapNotNull { k -> if (k in column.marks) null else column.inks.getOrNull(k)?.let { extent(it, column.cells[k]) } }.sorted()
-        val usual = extents.getOrNull(extents.size / 2)
         for (k in column.cells.indices) {
             val inCell = byCell[k].orEmpty()
             val mark = column.marks[k]
@@ -322,33 +323,42 @@ internal object VerticalLayout {
             } else {
                 // A cell holds one character: punctuation read beside another one (where the ink
                 // shows none) was made up, as the recognizer does after the last character of a row.
-                val read = if (inCell.size > 1) inCell.filterNot { it.text in STRAY_PUNCTUATION }.ifEmpty { inCell } else inCell
-                val ink = column.inks.getOrNull(k)
-                chars += if (ink == null || usual == null) read else read.map { sized(it, column.cells[k], ink, usual) }
+                chars += if (inCell.size > 1) inCell.filterNot { it.text in STRAY_PUNCTUATION }.ifEmpty { inCell } else inCell
             }
         }
         return OcrResult.fixHe(fixVerticalForms(chars, keep = marked))
     }
 
-    /** How far the [ink] in a [cell] reaches, across or down, relative to the cell. */
-    private fun extent(ink: Box, cell: Box) = max(ink.width, ink.height) / cell.width
-
     /**
-     * [c] as a small or a full-size kana, as the [ink] in its [cell] tells, compared with the
-     * [usual] extent of the column's characters: on a sheet the recognizer often reads small kana
-     * as full-size ones (or the other way round). Small kana are about three quarters the size of
-     * others (in real columns 0.76 to 0.81 of the usual, full-size kana from 0.85 on) and set right
-     * of the middle (in the upper right) of their cells in vertical text.
+     * The text of [column] from two readings: [sheet], as read on a sheet ([readColumn]: with the
+     * boxes of their cells), and [native], the recognizer's own reading of the vertical text, by
+     * cell. Each reads some characters wrong that the other reads right, so where they differ,
+     * [judge] picks what looks more like the character in the cell (given the cell's index and
+     * the candidates; it prefers the first unless another looks clearly more like it). Small kana
+     * are told from full-size ones (っ from つ) the same way.
      */
-    private fun sized(c: OcrChar, cell: Box, ink: Box, usual: Float): OcrChar {
-        val size = extent(ink, cell) / usual
-        val right = (ink.centerX - cell.left) / cell.width
-        val fixed = when {
-            size <= 0.83f && right >= 0.52f -> SMALL_KANA[c.text]
-            size >= 0.9f -> FULL_KANA[c.text]
-            else -> null
+    fun merge(column: Column, sheet: List<OcrChar>, native: Map<Int, String>, judge: (cell: Int, candidates: List<String>) -> String): List<OcrChar> {
+        val cellOf = column.cells.withIndex().associate { (i, box) -> box to i }
+        val bySheet = sheet.groupBy { ch -> ch.box?.let { cellOf[it] } ?: -1 }
+        val out = ArrayList(bySheet[-1].orEmpty())
+        fun single(s: String) = s.isNotEmpty() && s.codePointCount(0, s.length) == 1
+        for (k in column.cells.indices) {
+            val read = bySheet[k].orEmpty()
+            val text = read.joinToString("") { it.text }
+            val n = native[k]?.takeIf { it.isNotBlank() }
+            val chosen = when {
+                n == null || n == text || k in column.marks -> null
+                read.isEmpty() -> n
+                single(text) && single(n) -> judge(k, listOf(n, text))
+                else -> null
+            }
+            val chars = if (chosen == null) read else Cjk.codePoints(chosen).map { OcrChar(String(Character.toChars(it)), column.cells[k]) }.toList()
+            for (c in chars) {
+                val other = if (k in column.marks || chars.size != 1) null else SMALL_KANA[c.text] ?: FULL_KANA[c.text]
+                out += if (other == null) c else judge(k, listOf(c.text, other)).let { if (it == c.text) c else OcrChar(it, c.box) }
+            }
         }
-        return if (fixed == null) c else OcrChar(fixed, c.box)
+        return OcrResult.fixHe(out)
     }
 
     private val STRAY_PUNCTUATION = setOf("、", "。", ",", ".", "，", "．", "'", "`")
@@ -494,6 +504,26 @@ internal object VerticalLayout {
         if (strong < 60) return null
         val threshold = max(48, strong / 2)
         val mask = BooleanArray(n) { abs(lum[it] - background) > threshold }
+        // Faint pixels away from the ink (not the soft edges of strokes) are a pattern: screentone.
+        val faint = max(16, strong / 5)
+        var ink = 0
+        var pattern = 0
+        for (y in 0 until h) for (x in 0 until w) {
+            val i = y * w + x
+            if (mask[i]) {
+                ink++
+                continue
+            }
+            if (abs(lum[i] - background) <= faint) continue
+            var nearInk = false
+            for (dy in -1..1) for (dx in -1..1) {
+                val yy = y + dy
+                val xx = x + dx
+                if (yy in 0 until h && xx in 0 until w && mask[yy * w + xx]) nearInk = true
+            }
+            if (!nearInk) pattern++
+        }
+        val textured = pattern * 10 > ink * 3
         // The background's actual color, for filling around cut-out cells.
         var r = 0L
         var g = 0L
@@ -506,7 +536,7 @@ internal object VerticalLayout {
             k++
         }
         val color = if (k == 0) -1 else (0xFF shl 24) or ((r / k).toInt() shl 16) or ((g / k).toInt() shl 8) or (b / k).toInt()
-        return Ink(mask, color, Contrast(threshold, strong))
+        return Ink(mask, color, Contrast(threshold, strong, textured))
     }
 
     /** Index ranges [start, end) where [value] is at least [min]. */
