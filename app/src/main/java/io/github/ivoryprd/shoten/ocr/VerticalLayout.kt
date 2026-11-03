@@ -354,12 +354,19 @@ internal object VerticalLayout {
             }
             val chars = if (chosen == null) read else Cjk.codePoints(chosen).map { OcrChar(String(Character.toChars(it)), column.cells[k]) }.toList()
             for (c in chars) {
-                val other = if (k in column.marks || chars.size != 1) null else SMALL_KANA[c.text] ?: FULL_KANA[c.text]
-                out += if (other == null) c else judge(k, listOf(c.text, other)).let { if (it == c.text) c else OcrChar(it, c.box) }
+                // Small and full-size kana, and corner brackets turned in vertical text (read as 一).
+                val others = when {
+                    k in column.marks || chars.size != 1 -> emptyList()
+                    c.text in BRACKET_LOOKALIKES -> listOf("「", "」")
+                    else -> listOfNotNull(SMALL_KANA[c.text] ?: FULL_KANA[c.text])
+                }
+                out += if (others.isEmpty()) c else judge(k, listOf(c.text) + others).let { if (it == c.text) c else OcrChar(it, c.box) }
             }
         }
         return OcrResult.fixHe(out)
     }
+
+    private val BRACKET_LOOKALIKES = setOf("一", "ー", "-", "−", "—", "―")
 
     private val STRAY_PUNCTUATION = setOf("、", "。", ",", ".", "，", "．", "'", "`")
 

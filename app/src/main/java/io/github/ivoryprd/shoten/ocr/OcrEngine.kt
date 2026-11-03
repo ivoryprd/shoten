@@ -66,9 +66,12 @@ class OcrEngine(private val prefs: Prefs) {
                 currentCoroutineContext().ensureActive()
                 Log.d(TAG, "$script OCR of ${bitmap.width}x${bitmap.height}: ${text.textBlocks.size} blocks in ${(System.nanoTime() - start) / 1_000_000} ms")
                 val result = fitChars(convert(text, bitmap.width, bitmap.height), input)
-                if (!vertical) return result
+                // Vertical text the recognizer found is read again column by column (it misreads
+                // much of it); with [vertical], text around any line is.
+                val columns = result.blocks.any { b -> b.lines.any { it.vertical && it.chars.count { c -> c.text.isNotBlank() } >= 3 } }
+                if (!vertical && !columns) return result
                 return try {
-                    readVertical(input, result, script)
+                    readVertical(input, result, script, onlyColumns = !vertical)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -99,10 +102,10 @@ class OcrEngine(private val prefs: Prefs) {
      * this reads replaces the lines of the first pass that the columns cover, unless it reads
      * clearly less; other lines (horizontal text beside the columns, say) are kept.
      */
-    private suspend fun readVertical(image: Bitmap, first: OcrResult, script: OcrScript): OcrResult {
+    private suspend fun readVertical(image: Bitmap, first: OcrResult, script: OcrScript, onlyColumns: Boolean = false): OcrResult {
         val start = System.nanoTime()
         val firstLines = first.blocks.flatMap { it.lines }
-        val seeds = firstLines.mapNotNull { line ->
+        val seeds = firstLines.filter { !onlyColumns || it.vertical }.mapNotNull { line ->
             line.box?.let { it to line.chars.count { c -> c.box != null && c.text.isNotBlank() } }
         }
         fun columnsIn(region: VerticalLayout.Region): List<VerticalLayout.Column> {
