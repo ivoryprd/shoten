@@ -349,7 +349,8 @@ internal object VerticalLayout {
             val chosen = when {
                 n == null || n == text || k in column.marks -> null
                 read.isEmpty() -> n
-                single(text) && single(n) -> judge(k, listOf(n, text))
+                // The sheet reads better as a rule: the recognizer's own reading only where it looks clearly more like it.
+                single(text) && single(n) -> judge(k, listOf(text, n))
                 else -> null
             }
             val chars = if (chosen == null) read else Cjk.codePoints(chosen).map { OcrChar(String(Character.toChars(it)), column.cells[k]) }.toList()

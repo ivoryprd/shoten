@@ -290,8 +290,8 @@ class VerticalLayoutTest {
             if (truth[k] in candidates) truth[k] else candidates.first()
         }.joinToString("") { it.text }
         assertEquals("待っ天く。", merge(mapOf(0 to "待", 1 to "っ", 2 to "大", 3 to "く", 4 to "o")))
-        // Asked only where they differ (and for kana that have a small form), the native reading first.
-        assertTrue(listOf("っ", "つ") in asked && listOf("大", "天") in asked)
+        // Asked only where they differ (and for kana that have a small form), the sheet's reading first.
+        assertTrue(listOf("つ", "っ") in asked && listOf("天", "大") in asked)
         assertTrue(asked.none { "待" in it || "く" in it })
         // The mark in cell 4 isn't questioned.
         assertTrue(asked.none { "o" in it })
