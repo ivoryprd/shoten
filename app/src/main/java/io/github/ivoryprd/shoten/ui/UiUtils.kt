@@ -11,17 +11,28 @@ import android.view.View
 import android.view.WindowInsets
 import android.widget.Toast
 import io.github.ivoryprd.shoten.R
+import io.github.ivoryprd.shoten.dict.DictionaryUpdates
 import io.github.ivoryprd.shoten.dict.ImportService
 
 /** Download locations of the built-in dictionary choices. */
 object KnownDictionaries {
     const val JITENDEX_URL = "https://github.com/stephenmk/stephenmk.github.io/releases/latest/download/jitendex-yomitan.zip"
-    const val CEDICT_URL = "https://www.mdbg.net/chinese/export/cedict/cedict_1_0_ts_utf-8_mdbg.zip"
+    const val CEDICT_URL = DictionaryUpdates.CEDICT_URL
     const val MORE_DICTIONARIES_URL = "https://github.com/MarvNC/yomitan-dictionaries"
 
     fun downloadJitendex(context: Context) = ImportService.download(context, JITENDEX_URL, "Jitendex")
 
     fun downloadCedict(context: Context) = ImportService.download(context, CEDICT_URL, "CC-CEDICT")
+
+    /** Downloads and installs [update] in place of the dictionary it updates. */
+    fun applyUpdate(context: Context, update: DictionaryUpdates.Update) {
+        val d = update.dictionary
+        if (d.isUpdatable && d.indexUrl != null) {
+            ImportService.update(context, d.id)
+        } else {
+            ImportService.download(context, update.downloadUrl, d.title, replaceId = d.id)
+        }
+    }
 }
 
 /** Pads the view so its content stays clear of the status and navigation bars (edge-to-edge). */

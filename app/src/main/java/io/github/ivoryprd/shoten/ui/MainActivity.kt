@@ -120,6 +120,8 @@ class MainActivity : Activity() {
         super.onStart()
         app.imports.addListener(importListener)
         app.dictionaries.addListener(dictionaryListener)
+        app.updates.addListener(dictionaryListener)
+        app.updates.check(maxAge = 7 * 24 * 60 * 60 * 1000L)
         updateSetupCard()
         updateDictionaryCard()
         updateOcrCard()
@@ -128,6 +130,7 @@ class MainActivity : Activity() {
     override fun onStop() {
         app.imports.removeListener(importListener)
         app.dictionaries.removeListener(dictionaryListener)
+        app.updates.removeListener(dictionaryListener)
         super.onStop()
     }
 
@@ -204,7 +207,8 @@ class MainActivity : Activity() {
             getString(R.string.setup_dictionaries_none)
         } else {
             resources.getQuantityString(R.plurals.setup_dictionaries_count, installed.size, installed.size) + "\n" +
-                installed.joinToString("\n") { "• " + it.title }
+                installed.joinToString("\n") { "• " + it.title } +
+                if (app.updates.available.isNotEmpty()) "\n\n" + getString(R.string.setup_updates_available) else ""
         }
         val hasJa = installed.any { it.language == Language.JAPANESE && it.terms > 0 }
         val hasZh = installed.any { it.language == Language.CHINESE && it.terms > 0 }

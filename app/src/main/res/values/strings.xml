@@ -101,6 +101,15 @@
     <string name="state_on">On</string>
     <string name="state_off">Off</string>
     <string name="action_copy">Copy</string>
+    <string name="action_check_updates">Check for updates</string>
+    <string name="action_update_all">Update all</string>
+    <string name="action_update">Update</string>
+    <string name="updates_checking">Checking for dictionary updates…</string>
+    <string name="updates_unchecked">Jitendex and CC-CEDICT are updated regularly.</string>
+    <string name="updates_none">All dictionaries are up to date.</string>
+    <string name="updates_failed">Couldn’t check for updates. Are you offline?</string>
+    <string name="dictionary_update_available">Update available: %1$s</string>
+    <string name="setup_updates_available">Dictionary updates are available.</string>
     <string name="action_copy_all">Copy all text</string>
     <string name="action_correct_text">Correct the text</string>
     <string name="action_delete_character">Delete the character</string>
@@ -131,5 +140,9 @@
     <plurals name="results_more">
         <item quantity="one">Show %1$d more</item>
         <item quantity="other">Show %1$d more</item>
+    </plurals>
+    <plurals name="updates_available">
+        <item quantity="one">%d dictionary update available:</item>
+        <item quantity="other">%d dictionary updates available:</item>
     </plurals>
 </resources>

@@ -3,7 +3,10 @@ package io.github.ivoryprd.shoten
 import android.app.Application
 import android.content.ComponentCallbacks2
 import android.content.Context
+import io.github.ivoryprd.shoten.dict.DictionaryInstaller
 import io.github.ivoryprd.shoten.dict.DictionaryRepository
+import io.github.ivoryprd.shoten.dict.DictionaryUpdates
+import io.github.ivoryprd.shoten.dict.UpdateState
 import io.github.ivoryprd.shoten.dict.ImportState
 import io.github.ivoryprd.shoten.lookup.LookupEngine
 import io.github.ivoryprd.shoten.ocr.CharSuggestions
@@ -25,6 +28,11 @@ class ShotenApp : Application() {
     lateinit var ocr: OcrEngine
         private set
     val imports = ImportState()
+
+    /** Checks for newer versions of the installed dictionaries. */
+    val updates: UpdateState by lazy {
+        UpdateState(DictionaryUpdates({ DictionaryInstaller.fetchText(it) }, DictionaryInstaller::lastModified), dictionaries)
+    }
 
     /** Suggestions for correcting recognized characters, loaded when first used. */
     val charSuggestions: CharSuggestions by lazy { CharSuggestions(SimilarChars { assets.open(it) }, GlyphRenderer()::ink) }

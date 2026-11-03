@@ -24,6 +24,7 @@ import android.widget.Switch
 import android.widget.TextView
 import io.github.ivoryprd.shoten.R
 import io.github.ivoryprd.shoten.ShotenApp
+import io.github.ivoryprd.shoten.dict.DictionaryUpdates
 import io.github.ivoryprd.shoten.dict.ImportService
 import io.github.ivoryprd.shoten.dict.ImportState
 import io.github.ivoryprd.shoten.dict.InstalledDictionary
@@ -37,6 +38,14 @@ class DictionariesActivity : Activity() {
     private lateinit var jitendexCard: View
     private lateinit var cedictCard: View
     private lateinit var progressCard: LinearLayout
+    private lateinit var updatesCard: LinearLayout
+    private lateinit var updatesText: TextView
+    private lateinit var checkButton: Button
+    private lateinit var updateAllButton: Button
+    private val updatesListener: () -> Unit = {
+        updateUpdatesCard()
+        rebuildList()
+    }
     private lateinit var progressText: TextView
     private lateinit var progressBar: ProgressBar
     private lateinit var cancelButton: Button
@@ -58,6 +67,19 @@ class DictionariesActivity : Activity() {
         scroll.applySystemBarPadding()
 
         content.addView(header(getString(R.string.dictionaries_title)))
+
+        updatesCard = card()
+        updatesText = body("")
+        updatesCard.addView(updatesText)
+        val updateButtons = LinearLayout(this).apply { gravity = Gravity.END }
+        checkButton = textButton(getString(R.string.action_check_updates)) { app.updates.check() }
+        updateAllButton = textButton(getString(R.string.action_update_all)) {
+            withNotificationPermission { app.updates.available.forEach { KnownDictionaries.applyUpdate(this, it) } }
+        }
+        updateButtons.addView(checkButton)
+        updateButtons.addView(updateAllButton)
+        updatesCard.addView(updateButtons)
+        content.addView(updatesCard)
 
         jitendexCard = actionCard(getString(R.string.get_jitendex), getString(R.string.get_jitendex_summary)) {
             withNotificationPermission { KnownDictionaries.downloadJitendex(this) }
@@ -105,12 +127,17 @@ class DictionariesActivity : Activity() {
         super.onStart()
         app.imports.addListener(importListener)
         app.dictionaries.addListener(dictionaryListener)
+        app.updates.addListener(updatesListener)
+        // Jitendex is updated about monthly, CC-CEDICT daily: once a day is often enough.
+        app.updates.check(maxAge = 24 * 60 * 60 * 1000L)
+        updateUpdatesCard()
         rebuildList()
     }
 
     override fun onStop() {
         app.imports.removeListener(importListener)
         app.dictionaries.removeListener(dictionaryListener)
+        app.updates.removeListener(updatesListener)
         super.onStop()
     }
 
@@ -164,6 +191,29 @@ class DictionariesActivity : Activity() {
         cancelButton.visibility = if (status.running) View.VISIBLE else View.GONE
     }
 
+    private fun updateUpdatesCard() {
+        val updates = app.updates
+        updatesCard.visibility = if (updates.hasUpdatable) View.VISIBLE else View.GONE
+        val available = updates.available
+        updatesText.text = when {
+            updates.checking -> getString(R.string.updates_checking)
+            available.isNotEmpty() -> resources.getQuantityString(R.plurals.updates_available, available.size, available.size) + "\n" +
+                available.joinToString("\n") { "• " + it.dictionary.title + " → " + it.revision }
+            updates.lastCheck == 0L -> getString(R.string.updates_unchecked)
+            updates.lastCheckFailed -> getString(R.string.updates_failed)
+            else -> getString(R.string.updates_none)
+        }
+        checkButton.isEnabled = !updates.checking
+        updateAllButton.visibility = if (available.isNotEmpty() && !updates.checking) View.VISIBLE else View.GONE
+    }
+
+    private fun textButton(label: String, onClick: () -> Unit) = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+        text = label
+        isAllCaps = false
+        setTextColor(getColor(R.color.accent))
+        setOnClickListener { onClick() }
+    }
+
     private fun rebuildList() {
         val installed = app.dictionaries.installed
         jitendexCard.visibility = if (installed.any { it.title.startsWith("Jitendex") }) View.GONE else View.VISIBLE
@@ -196,6 +246,10 @@ class DictionariesActivity : Activity() {
             else -> getString(R.string.dictionary_details_meta, languageName(d.language), d.revision, number.format(d.termMeta))
         }
         texts.addView(body(details))
+        val update = app.updates.available.firstOrNull { it.dictionary.id == d.id }
+        if (update != null) {
+            texts.addView(body(getString(R.string.dictionary_update_available, update.revision)).apply { setTextColor(getColor(R.color.accent)) })
+        }
         top.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         @Suppress("DEPRECATION")
         val toggle = Switch(this).apply {
@@ -208,7 +262,10 @@ class DictionariesActivity : Activity() {
 
         val actions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.END
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+        }
+        if (update != null) {
+            actions.addView(textButton(getString(R.string.action_update)) { withNotificationPermission { KnownDictionaries.applyUpdate(this, update) } })
         }
         actions.addView(iconButton(R.drawable.ic_expand_less, R.string.action_move_up, index > 0) { app.dictionaries.move(d.id, -1) })
         actions.addView(iconButton(R.drawable.ic_expand_more, R.string.action_move_down, index < count - 1) { app.dictionaries.move(d.id, 1) })
@@ -222,7 +279,7 @@ class DictionariesActivity : Activity() {
     private fun showMenu(d: InstalledDictionary, anchor: View) {
         val menu = PopupMenu(this, anchor)
         menu.menu.add(0, MENU_INFO, 0, R.string.action_info)
-        if (d.isUpdatable && d.indexUrl != null) menu.menu.add(0, MENU_UPDATE, 1, R.string.action_check_update)
+        if ((d.isUpdatable && d.indexUrl != null) || d.title == DictionaryUpdates.CEDICT_TITLE) menu.menu.add(0, MENU_UPDATE, 1, R.string.action_check_update)
         val languages = menu.menu.addSubMenu(0, MENU_LANGUAGE, 2, getString(R.string.action_language, languageName(d.language)))
         languages.add(0, MENU_LANG_JA, 0, R.string.language_japanese)
         languages.add(0, MENU_LANG_ZH, 1, R.string.language_chinese)
@@ -231,7 +288,11 @@ class DictionariesActivity : Activity() {
         menu.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 MENU_INFO -> showInfo(d)
-                MENU_UPDATE -> withNotificationPermission { ImportService.update(this, d.id) }
+                MENU_UPDATE -> if (d.isUpdatable && d.indexUrl != null) {
+                    withNotificationPermission { ImportService.update(this, d.id) }
+                } else {
+                    app.updates.check()
+                }
                 MENU_LANG_JA -> app.dictionaries.setLanguage(d.id, Language.JAPANESE)
                 MENU_LANG_ZH -> app.dictionaries.setLanguage(d.id, Language.CHINESE)
                 MENU_LANG_OTHER -> app.dictionaries.setLanguage(d.id, Language.OTHER)

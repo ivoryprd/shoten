@@ -129,6 +129,33 @@ class DictionaryInstaller(private val repository: DictionaryRepository) {
             }
         }
 
+        /** When the file at [url] was last changed (its Last-Modified header), following redirects; null if not told. */
+        fun lastModified(url: String): Long? {
+            var current = URL(url)
+            var redirects = 0
+            while (true) {
+                val connection = current.openConnection() as HttpURLConnection
+                connection.instanceFollowRedirects = false
+                connection.requestMethod = "HEAD"
+                connection.connectTimeout = 20_000
+                connection.readTimeout = 30_000
+                connection.setRequestProperty("User-Agent", USER_AGENT)
+                try {
+                    val code = connection.responseCode
+                    if (code in 300..399) {
+                        val location = connection.getHeaderField("Location") ?: throw IOException("Redirect without location")
+                        if (++redirects > 8) throw IOException("Too many redirects")
+                        current = URL(current, location)
+                        continue
+                    }
+                    if (code != HttpURLConnection.HTTP_OK) throw IOException("HTTP $code")
+                    return connection.lastModified.takeIf { it > 0 }
+                } finally {
+                    connection.disconnect()
+                }
+            }
+        }
+
         /** Fetches a small text resource, such as a Yomitan index.json used for update checks. */
         fun fetchText(url: String, maxBytes: Int = 1024 * 1024): String {
             var current = URL(url)
