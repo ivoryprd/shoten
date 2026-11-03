@@ -36,16 +36,38 @@ internal object CharFit {
         val first = start(boxed.first().value.box!!)
         val last = end(boxed.last().value.box!!)
         val cuts = FloatArray(boxed.size + 1)
-        cuts[0] = inkStart(profile, first - 0.5f * em, first + 0.5f * em, empty)?.let { it - 0.05f * em } ?: first
-        cuts[boxed.size] = inkEnd(profile, last - 0.5f * em, last + 0.5f * em, empty)?.let { it + 0.05f * em } ?: last
-        // The boundaries between the characters: of the places near each where it can be, those
-        // that cost the least together.
-        val widths = boxed.map { (_, c) -> end(c.box!!) - start(c.box!!) }
+        cuts[0] = inkStart(profile, first - 0.5f * em, first + 0.5f * em, empty) ?: first
+        cuts[boxed.size] = inkEnd(profile, last - 0.5f * em, last + 0.5f * em, empty) ?: last
+
+        // Where the boundaries should be by the characters themselves: full-width ones an em
+        // wide, Latin letters and digits about half, a space between words, the blank sides of
+        // brackets and punctuation; the em from the extent of the line's ink.
+        val units = boxed.map { (_, c) -> if (isFullWidth(c.text)) 1f else HALF }
+        val spaces = boxed.indices.map { k ->
+            if (k == boxed.lastIndex) 0f else if ((boxed[k].index + 1 until boxed[k + 1].index).any { line.chars[it].text.isBlank() }) SPACE else 0f
+        }
+        val lead = units.first() * leadingBlank(boxed.first().value.text)
+        val trail = units.last() * trailingBlank(boxed.last().value.text)
+        val total = units.sum() + spaces.sum() - lead - trail
+        val unit = if (total > 0f && cuts[boxed.size] > cuts[0]) (cuts[boxed.size] - cuts[0]) / total else em
+        val expected = FloatArray(boxed.size + 1)
+        expected[0] = cuts[0] - lead * unit
+        for (k in boxed.indices) expected[k + 1] = expected[k] + (units[k] + spaces[k]) * unit
+        cuts[0] = expected[0].coerceAtMost(cuts[0] - 0.05f * unit)
+        cuts[boxed.size] = (expected[boxed.size] - (spaces.last()) * unit).coerceAtLeast(cuts[boxed.size] + 0.05f * unit)
+
+        // The boundaries between the characters: of the places near each where it can be (near
+        // where the characters' sizes or the recognizer put it), those that cost the least together.
         val options = (1 until boxed.size).map { i ->
-            options(profile, (end(boxed[i - 1].value.box!!) + start(boxed[i].value.box!!)) / 2, em, empty, peak)
+            val byUnits = expected[i] - spaces[i - 1] * unit / 2
+            val byBoxes = (end(boxed[i - 1].value.box!!) + start(boxed[i].value.box!!)) / 2
+            (options(profile, byUnits, unit, empty, peak) + options(profile, byBoxes, unit, empty, peak))
+                .groupBy { it.first }.map { (position, o) -> position to o.minOf { it.second } }
         }
         if (options.isNotEmpty()) {
-            fun widthCost(k: Int, a: Float, b: Float) = abs((b - a) - widths[k]) / em
+            // Latin letters vary in width more than a half em: their widths count less.
+            fun widthCost(k: Int, a: Float, b: Float) =
+                abs((b - a) - (units[k] + spaces[k]) * unit) / unit * if (units[k] < 1f) 0.4f else 1f
             // cost[i][o]: the least cost of the characters up to boundary i at its option o.
             val cost = options.map { FloatArray(it.size) }
             val from = options.map { IntArray(it.size) }
@@ -72,7 +94,7 @@ internal object CharFit {
             }
         }
         // Characters keep at least a third of an em, in order.
-        for (i in 1..boxed.size) cuts[i] = max(cuts[i], cuts[i - 1] + em / 3)
+        for (i in 1..boxed.size) cuts[i] = max(cuts[i], cuts[i - 1] + unit / 3)
 
         val chars = line.chars.toMutableList()
         boxed.forEachIndexed { i, (index, c) ->
@@ -158,6 +180,27 @@ internal object CharFit {
         out += expected to 3f * profile[expected.roundToInt().coerceIn(0, profile.size - 1)] / peak
         return out
     }
+
+    private fun isFullWidth(s: String): Boolean {
+        val cp = s.codePointAt(0)
+        return io.github.ivoryprd.shoten.util.Cjk.isHan(cp) || cp in 0x3000..0x30FF || cp in 0x31F0..0x31FF || cp in 0xFF01..0xFF60
+    }
+
+    /** The empty part of a character's cell before its ink, in its widths. */
+    private fun leadingBlank(s: String): Float = if (s in OPENING) 0.6f else 0f
+
+    /** The empty part of a character's cell after its ink, in its widths. */
+    private fun trailingBlank(s: String): Float = when (s) {
+        in CLOSING -> 0.65f
+        in CENTERED -> 0.3f
+        else -> 0f
+    }
+
+    private const val HALF = 0.55f
+    private const val SPACE = 0.3f
+    private val OPENING = "「『（【〈《〔［｛〘〖".map { it.toString() }.toSet()
+    private val CLOSING = "。、，．」』）】〉》〕］｝〙〗".map { it.toString() }.toSet()
+    private val CENTERED = "？！：；".map { it.toString() }.toSet()
 
     private fun inkStart(profile: FloatArray, from: Float, to: Float, empty: Float): Float? {
         for (k in from.roundToInt().coerceAtLeast(0) until to.roundToInt().coerceAtMost(profile.size)) if (profile[k] > empty) return k.toFloat()

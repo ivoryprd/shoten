@@ -39,7 +39,7 @@ class CharFitTest {
         val chars = cells.map { (a0, z0) ->
             val a = off(a0)
             val z = off(z0)
-            OcrChar("字", if (vertical) Box(10f, a, 50f, z) else Box(a, 10f, z, 50f))
+            OcrChar(if (z0 - a0 < 30) "a" else "字", if (vertical) Box(10f, a, 50f, z) else Box(a, 10f, z, 50f))
         }
         val lineBox = chars.mapNotNull { it.box }.reduce { a, b -> a.union(b) }
         val fitted = CharFit.fit(OcrLine(chars, lineBox, forceVertical = vertical), pixels, w, h, 0, 0)
