@@ -7,8 +7,8 @@ on-device, and tapping or sliding over a word shows its dictionary entry.
 
 - **Screen lookup (OCR)**: on-device text recognition with Google ML Kit (Japanese and Chinese models).
   Tap a character to look up the text from there, or slide your finger along a line to scan word by word.
-  Words split by a line break are found across it, and a vertical text mode reads manga and vertical
-  novels reliably, even small lettering and text on screentone. Misread characters can be corrected
+  Words split by a line break are found across it, and vertical text (manga, vertical novels) is read
+  column by column, which is far more reliable, even for small lettering and text on screentone. Misread characters can be corrected
   with a tap: Shoten suggests the characters that look like the one on the screen.
 - **Yomitan-style lookups**: the longest matching word wins, Japanese conjugations are resolved
   (食べさせられなかった → 食べる, *causative › passive/potential › negative › past*), katakana and common
@@ -67,11 +67,13 @@ assistant API, which is what the gesture falls back to once Circle to Search is 
 - The chip at the top switches between Japanese (日本語) and Chinese (中文) recognition. In automatic mode
   Shoten reads Japanese, and switches to Chinese when the screen has no kana and a Chinese dictionary is
   installed.
-- The 縦 button turns on vertical text mode (also in Settings), for manga and vertical novels: columns
-  are found in the screenshot, cut into their characters' cells and read as horizontal lines, which ML
-  Kit reads much more reliably than vertical text (small lettering, short columns in speech bubbles,
-  text on screentone). Text elsewhere on the screen is read as usual. ML Kit also reads clean vertical
-  text without it.
+- Vertical text that ML Kit finds is read again column by column: the columns are found in the
+  screenshot, cut into their characters' cells and read as horizontal lines, which ML Kit reads much
+  more reliably than vertical text. Where the two readings differ, the character that looks more like
+  the one on the screen is kept. The 縦 button (also in Settings) reads all text this way, for columns
+  ML Kit doesn't recognize as vertical (small lettering, short columns in speech bubbles, screentone).
+- Selection boxes are fitted to the characters in the screenshot: the boundaries between characters
+  are placed in the gaps between them.
 - Tap outside the text, press back, or use the assist gesture again to close.
 
 Apps that block screenshots (banking apps, DRM-protected video) can't be read.
@@ -79,8 +81,9 @@ Apps that block screenshots (banking apps, DRM-protected video) can't be read.
 ## Dictionaries
 
 Dictionaries are managed under **Dictionaries**: enable/disable, reorder (higher dictionaries are shown
-first), set the language, check for updates (for dictionaries such as Jitendex that publish an update
-URL), show attribution, and delete.
+first), set the language, show attribution, and delete. Jitendex (and other dictionaries that publish
+an update URL) and CC-CEDICT are checked for updates once a day when the screen is opened (the main
+screen checks weekly and says when there are updates); **Update** or **Update all** installs them.
 
 More Yomitan dictionaries — frequency lists (JPDB, BCCWJ), pitch accents (Kanjium), kanji dictionaries
 (KANJIDIC), other bilingual dictionaries — are listed at
