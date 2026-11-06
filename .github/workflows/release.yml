@@ -1,0 +1,105 @@
+name: Release
+
+# Publishes the version in app/build.gradle.kts as a GitHub release (tag v<version>) with signed
+# APKs when it isn't released yet, then deletes the older releases and their tags, so the
+# Releases page always has just the latest version.
+#
+# Signing needs these repository secrets (Settings → Secrets and variables → Actions):
+#   SIGNING_KEYSTORE_BASE64  the release keystore, base64-encoded
+#   SIGNING_STORE_PASSWORD   its password
+#   SIGNING_KEY_ALIAS        the key's alias
+#   SIGNING_KEY_PASSWORD     the key's password
+# Without them nothing is released: APKs signed with a throwaway key couldn't update each other.
+
+on:
+  push:
+    branches: [ccr-ff18fd7d-ps627f]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HAS_KEY: ${{ secrets.SIGNING_KEYSTORE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        run: |
+          version=$(sed -n 's/^ *versionName = "\(.*\)"/\1/p' app/build.gradle.kts)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "v$version is already released." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check signing key
+        if: steps.version.outputs.exists == 'false' && env.HAS_KEY != 'true'
+        run: |
+          echo "::warning::No signing key in the repository secrets: v${{ steps.version.outputs.version }} is not released."
+          echo "Add the SIGNING_* secrets (see the top of release.yml) and run this workflow again." >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-java@v4
+        if: steps.version.outputs.exists == 'false' && env.HAS_KEY == 'true'
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.version.outputs.exists == 'false' && env.HAS_KEY == 'true'
+
+      - name: Build signed APKs
+        if: steps.version.outputs.exists == 'false' && env.HAS_KEY == 'true'
+        env:
+          KEYSTORE: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.jks"
+          {
+            echo "storeFile=$RUNNER_TEMP/release.jks"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > keystore.properties
+          ./gradlew --no-daemon testStandardDebugUnitTest assembleStandardRelease assembleOfflineRelease
+          rm keystore.properties "$RUNNER_TEMP/release.jks"
+          v=${{ steps.version.outputs.version }}
+          mkdir out
+          cp app/build/outputs/apk/standard/release/app-standard-release.apk "out/shoten-$v.apk"
+          cp app/build/outputs/apk/offline/release/app-offline-release.apk "out/shoten-$v-offline.apk"
+          # Refuse to publish APKs that aren't signed with the release key.
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          for f in out/*.apk; do
+            certs=$("$apksigner" verify --print-certs "$f")
+            if echo "$certs" | grep -q "CN=Android Debug"; then echo "::error::$f is debug-signed"; exit 1; fi
+          done
+
+      - name: Publish and delete older releases
+        if: steps.version.outputs.exists == 'false' && env.HAS_KEY == 'true'
+        run: |
+          v=${{ steps.version.outputs.version }}
+          cat > notes.md <<EOF
+          **shoten-$v.apk**: the usual download. Text recognition comes from Google Play services.
+
+          **shoten-$v-offline.apk**: with the text recognition models built in, for devices without Google Play services.
+
+          Changes: see the [commits](https://github.com/${{ github.repository }}/commits/${{ github.sha }}).
+          EOF
+          gh release create "v$v" out/*.apk --title "Shoten $v" --notes-file notes.md --target "${{ github.sha }}" --latest
+          gh release list --limit 100 --json tagName --jq '.[].tagName' | while read -r tag; do
+            if [ "$tag" != "v$v" ]; then gh release delete "$tag" --yes --cleanup-tag; fi
+          done
+          echo "Released v$v." >> "$GITHUB_STEP_SUMMARY"

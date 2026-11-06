@@ -25,13 +25,16 @@ on-device, and tapping or sliding over a word shows its dictionary entry.
 
 ## Installing
 
-Build it yourself (see below) or download the APKs built by GitHub Actions (*Actions › Build › Artifacts*).
-There are two variants:
+Download the APK from the [latest release](https://github.com/ivoryprd/shoten/releases/latest) and open
+it on your phone (allow installing apps from your browser or file manager when asked). There are two
+variants:
 
 | Variant | Size | OCR models |
 | --- | --- | --- |
-| `standard` (recommended) | < 1 MB | Downloaded by Google Play services on first use (needs Play services, as on every Pixel). |
-| `offline` | ~45 MB | Bundled in the APK. Works on devices without Google Play services. |
+| `shoten-<version>.apk` (recommended) | ~1.2 MB | Downloaded by Google Play services on first use (needs Play services, as on every Pixel). |
+| `shoten-<version>-offline.apk` | ~45 MB | Bundled in the APK. Works on devices without Google Play services. |
+
+Newer releases install over older ones and keep your dictionaries. Only the latest release is kept.
 
 ## Setup
 
@@ -128,6 +131,13 @@ keyPassword=...
 
 Without it, release builds are signed with the debug key. The offline variant can be limited to specific
 ABIs to save space, e.g. `./gradlew assembleOfflineRelease -Pshoten.abiFilters=arm64-v8a`.
+
+### Releases
+
+Raising `versionName` in `app/build.gradle.kts` on the main branch publishes that version as a GitHub
+release with signed APKs and deletes the older releases ([release.yml](.github/workflows/release.yml)).
+It signs with the key in the repository secrets `SIGNING_KEYSTORE_BASE64`, `SIGNING_STORE_PASSWORD`,
+`SIGNING_KEY_ALIAS` and `SIGNING_KEY_PASSWORD`; without them nothing is released.
 
 ### Tests
 
