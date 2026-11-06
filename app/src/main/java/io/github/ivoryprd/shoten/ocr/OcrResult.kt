@@ -202,13 +202,23 @@ class OcrResult(val blocks: List<OcrBlock>, val width: Int, val height: Int) {
             val cps = Cjk.codePoints(text).map { String(Character.toChars(it)) }.toList()
             if (cps.size < 2) return null
             val vertical = box.height > box.width * 1.5f
-            val widths = symbols?.takeIf { it.size == cps.size }?.map { (_, b) -> b?.let { if (vertical) it.height else it.width } }
+            val sized = symbols?.takeIf { it.size == cps.size }
+            val widths = sized?.map { (_, b) -> b?.let { if (vertical) it.height else it.width } }
+            // How far each character is from the next: the width of proportional Latin letters
+            // (ML Kit's boxes are shifted, but by about as much as their neighbors).
+            fun start(b: Box) = if (vertical) b.top else b.left
+            val pitches = sized?.mapIndexed { i, (_, b) ->
+                val next = sized.getOrNull(i + 1)?.second
+                if (b == null) null else if (next != null && start(next) > start(b)) start(next) - start(b) else widths?.get(i)
+            }
             // ML Kit's first and last boxes are the least accurate; take the typical width from the others.
             val typical = widths?.let { w ->
                 val middle = w.indices.filter { it != 0 && it != w.lastIndex && cps[it][0].code >= 0x80 }.mapNotNull { w[it] }.sorted()
                 middle.getOrNull(middle.size / 2)
             }
             val judged = BooleanArray(cps.size)
+            // The widths in pixels of the half-width characters measured by ML Kit (NaN for others).
+            val measured = FloatArray(cps.size) { Float.NaN }
             val weights = FloatArray(cps.size) { i ->
                 val cp = cps[i].codePointAt(0)
                 val w = widths?.getOrNull(i)
@@ -217,15 +227,44 @@ class OcrResult(val blocks: List<OcrBlock>, val width: Int, val height: Int) {
                     cp >= 0x80 -> 1f
                     typical != null && w != null && i != 0 && i != cps.lastIndex -> {
                         judged[i] = true
-                        if (w < typical * 0.75f) 0.5f else 1f
+                        if (w >= typical * 0.75f) {
+                            1f
+                        } else {
+                            pitches?.get(i)?.let { measured[i] = it }
+                            latinWidth(pitches?.get(i), typical)
+                        }
                     }
                     Character.isLetterOrDigit(cp) -> 0.5f
                     else -> 1f // Punctuation in CJK text is usually full width.
                 }
             }
-            // A Latin letter or digit at either end is as wide as its neighbor in the same run.
+            // A Latin letter or digit at either end is as wide as its neighbor in the same run, and
+            // Latin punctuation there (the . of a URL split at it) half width at most.
             for ((end, neighbor) in listOf(0 to 1, cps.lastIndex to cps.lastIndex - 1)) {
-                if (isAsciiAlphanumeric(cps[end]) && isAsciiAlphanumeric(cps[neighbor]) && judged[neighbor]) weights[end] = weights[neighbor]
+                if (isAsciiAlphanumeric(cps[end]) && isAsciiAlphanumeric(cps[neighbor]) && judged[neighbor]) {
+                    weights[end] = weights[neighbor]
+                    measured[end] = measured[neighbor]
+                }
+                if (isAsciiPunctuation(cps[end]) && isAsciiAlphanumeric(cps[neighbor])) {
+                    weights[end] = if (typical != null) latinWidth(widths?.getOrNull(end), typical) else 0.5f
+                    widths?.getOrNull(end)?.let { if (typical != null) measured[end] = it }
+                }
+            }
+            // ML Kit's boxes of kana are narrower than their cells, so the typical width can
+            // underestimate the em, and Latin letters measured by it come out too wide (by a
+            // letter over a long word). The em is rather what the piece leaves to its full-width
+            // characters after its Latin letters' widths in pixels.
+            if (typical != null) {
+                val latin = measured.filter { !it.isNaN() }.sum()
+                val blank = (if (measured.first().isNaN()) weights.first() * leadingBlank(cps.first()) else 0f) +
+                    (if (measured.last().isNaN()) weights.last() * trailingBlank(cps.last()) else 0f)
+                val full = weights.indices.filter { measured[it].isNaN() }.sumOf { weights[it].toDouble() }.toFloat() - blank
+                val em = ((if (vertical) box.height else box.width) - latin) / full
+                // Only wider: where a Latin word meets CJK text, its last letter's width takes up
+                // ML Kit's shift and comes out too wide.
+                if (latin > 0f && full >= 1.5f && em in typical..typical * 1.5f) {
+                    for (i in weights.indices) if (!measured[i].isNaN()) weights[i] = latinWidth(measured[i], em)
+                }
             }
             val lead = weights.first() * leadingBlank(cps.first())
             val trail = weights.last() * trailingBlank(cps.last())
@@ -241,7 +280,13 @@ class OcrResult(val blocks: List<OcrBlock>, val width: Int, val height: Int) {
             }
         }
 
+        /** The width of a half-width character [pitch] from the next, in [typical] widths of full-width ones. */
+        private fun latinWidth(pitch: Float?, typical: Float): Float =
+            if (pitch == null) 0.5f else (pitch / typical).coerceIn(0.2f, 0.75f)
+
         private fun isAsciiAlphanumeric(s: String) = s.length == 1 && s[0].code < 0x80 && s[0].isLetterOrDigit()
+
+        private fun isAsciiPunctuation(s: String) = s.length == 1 && s[0].code in 0x21..0x7E && !s[0].isLetterOrDigit()
 
         /** The empty part of a character's cell before its ink, in em. */
         private fun leadingBlank(s: String): Float = if (s in OPENING) 0.6f else 0f

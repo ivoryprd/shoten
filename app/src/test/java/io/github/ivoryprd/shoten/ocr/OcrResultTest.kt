@@ -123,6 +123,39 @@ class OcrResultTest {
     }
 
     @Test
+    fun latinLettersInCjkTextKeepTheirWidths() {
+        fun parse(s: String) = Regex("""(\S+?)\[(\d+),(\d+)\]\[(\d+),(\d+)\]""").findAll(s).map { m ->
+            val (t, l, top, r, b) = m.destructured
+            t to Box(l.toFloat(), top.toFloat(), r.toFloat(), b.toFloat())
+        }.toList()
+        // ML Kit's boxes, measured on メールはinfo@example.comまで送ってください。 in a 40 px font from
+        // x = 40 (every Latin character 20 px): two pieces, split at the dot.
+        val first = parse(
+            "メ[34,633][95,670] ー[95,633][138,670] ル[138,633][175,670] は[175,633][203,670] i[203,633][228,670] " +
+                "n[228,633][249,670] f[249,633][268,670] o[268,633][286,670] @[286,633][305,670] e[305,633][326,670] " +
+                "x[326,633][348,670] a[348,633][369,670] m[369,633][391,670] p[391,633][409,670] l[409,633][428,670] " +
+                "e[428,633][443,670] .[443,633][456,670]",
+        )
+        val second = parse(
+            "c[471,633][486,670] o[486,633][508,670] m[508,633][539,670] ま[539,633][576,670] で[576,633][619,670] " +
+                "送[619,633][659,670] っ[659,633][696,670] て[696,633][733,670] く[733,633][773,670] だ[773,633][816,670] " +
+                "さ[816,633][853,670] い[853,633][881,670] 。[881,633][903,670]",
+        )
+        val line = OcrResult.buildLine(
+            listOf("メールはinfo@example." to Box(34f, 633f, 456f, 670f), "comまで送ってください。" to Box(471f, 633f, 903f, 670f)),
+            listOf(first, second),
+        )
+        // ML Kit's kana boxes are narrower than their cells; measured by them, the Latin letters
+        // came out about 15% too wide (a letter over a word). "info@example" is 6 em wide.
+        val chars = line.chars.filter { it.box != null }
+        val run = chars.subList(chars.indexOfFirst { it.text == "i" }, chars.indexOfFirst { it.text == "." })
+        val em = line.chars.first { it.text == "ル" }.box!!.width
+        assertEquals(6f, (run.last().box!!.right - run.first().box!!.left) / em, 0.4f)
+        val dot = line.chars.first { it.text == "." }.box!!
+        assertTrue("the dot is half width at most: ${dot.width}", dot.width <= 22f)
+    }
+
+    @Test
     fun usesTheRecognizersLineBox() {
         val lineBox = Box(0f, -2f, 62f, 22f)
         val line = OcrResult.buildLine(listOf("日本語" to Box(0f, 0f, 60f, 20f)), listOf(line("日本語", 0f, 0f)), lineBox)

@@ -26,9 +26,13 @@ class CharFitTest {
         return pixels to cells
     }
 
-    private fun check(vertical: Boolean, shift: Float, scale: Float) {
+    private fun check(
+        vertical: Boolean,
+        shift: Float,
+        scale: Float,
         // Full-width characters and half-width ones (Latin, digits), with gaps inside like ハ.
-        val widths = listOf(40, 40, 20, 40, 20, 20, 40, 40)
+        widths: List<Int> = listOf(40, 40, 20, 40, 20, 20, 40, 40),
+    ) {
         val length = 20 + widths.sum() + 20
         val w = if (vertical) 60 else length
         val h = if (vertical) length else 60
@@ -39,7 +43,7 @@ class CharFitTest {
         val chars = cells.map { (a0, z0) ->
             val a = off(a0)
             val z = off(z0)
-            OcrChar(if (z0 - a0 < 30) "a" else "字", if (vertical) Box(10f, a, 50f, z) else Box(a, 10f, z, 50f))
+            OcrChar(if (z0 - a0 < 36) "a" else "字", if (vertical) Box(10f, a, 50f, z) else Box(a, 10f, z, 50f))
         }
         val lineBox = chars.mapNotNull { it.box }.reduce { a, b -> a.union(b) }
         val fitted = CharFit.fit(OcrLine(chars, lineBox, forceVertical = vertical), pixels, w, h, 0, 0)
@@ -57,6 +61,15 @@ class CharFitTest {
         check(vertical = false, shift = 9f, scale = 1f)
         check(vertical = false, shift = -8f, scale = 1.04f)
         check(vertical = false, shift = 4f, scale = 0.96f)
+    }
+
+    @Test
+    fun proportionalLatinInCjkText() {
+        // 私はiMacとWindowsです: Latin letters from a third to three quarters of an em wide. Taken
+        // all as half an em, the boxes after a long word were a character off.
+        val widths = listOf(40, 40, 12, 32, 22, 20, 40, 34, 12, 22, 22, 22, 30, 18, 40, 40)
+        check(vertical = false, shift = 6f, scale = 1f, widths = widths)
+        check(vertical = false, shift = -5f, scale = 1.03f, widths = widths)
     }
 
     @Test

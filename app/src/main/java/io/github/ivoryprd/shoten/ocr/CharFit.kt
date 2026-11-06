@@ -42,7 +42,13 @@ internal object CharFit {
         // Where the boundaries should be by the characters themselves: full-width ones an em
         // wide, Latin letters and digits about half, a space between words, the blank sides of
         // brackets and punctuation; the em from the extent of the line's ink.
-        val units = boxed.map { (_, c) -> if (isFullWidth(c.text)) 1f else HALF }
+        // Proportional Latin letters (i, m) as wide as their boxes, measured by the full-width
+        // characters' (or, in a line without any, taken to be about half of those).
+        val fullSizes = boxed.filter { (_, c) -> isFullWidth(c.text) }.map { (_, c) -> end(c.box!!) - start(c.box!!) }.sorted()
+        val reference = if (fullSizes.size >= 2) fullSizes[fullSizes.size / 2] else em / HALF
+        val units = boxed.map { (_, c) ->
+            if (isFullWidth(c.text)) 1f else ((end(c.box!!) - start(c.box!!)) / reference).coerceIn(0.2f, 0.8f)
+        }
         val spaces = boxed.indices.map { k ->
             if (k == boxed.lastIndex) 0f else if ((boxed[k].index + 1 until boxed[k + 1].index).any { line.chars[it].text.isBlank() }) SPACE else 0f
         }
@@ -65,9 +71,7 @@ internal object CharFit {
                 .groupBy { it.first }.map { (position, o) -> position to o.minOf { it.second } }
         }
         if (options.isNotEmpty()) {
-            // Latin letters vary in width more than a half em: their widths count less.
-            fun widthCost(k: Int, a: Float, b: Float) =
-                abs((b - a) - (units[k] + spaces[k]) * unit) / unit * if (units[k] < 1f) 0.4f else 1f
+            fun widthCost(k: Int, a: Float, b: Float) = abs((b - a) - (units[k] + spaces[k]) * unit) / unit
             // cost[i][o]: the least cost of the characters up to boundary i at its option o.
             val cost = options.map { FloatArray(it.size) }
             val from = options.map { IntArray(it.size) }
