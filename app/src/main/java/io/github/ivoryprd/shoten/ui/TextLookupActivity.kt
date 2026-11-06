@@ -1,9 +1,11 @@
 package io.github.ivoryprd.shoten.ui
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -17,6 +19,8 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import io.github.ivoryprd.shoten.OcrMode
 import io.github.ivoryprd.shoten.R
 import io.github.ivoryprd.shoten.ShotenApp
@@ -111,12 +115,45 @@ class TextLookupActivity : Activity() {
         lookups = LookupController(this, scope, resultsView, object : LookupController.Listener {
             override fun onResult(result: LookupResult, nested: Boolean) {
                 if (!nested) updateText(result.matchLength)
+                updateBackHandling()
             }
 
             override fun onLeaving() = finish()
         })
         language = detectLanguage(text)
         lookupFrom(0)
+    }
+
+    // Back returns from links and kanji opened from the results. Android 13+ uses
+    // OnBackInvokedCallback (registered only while there is somewhere to go back to); older
+    // versions use onBackPressed.
+    private var backCallback: Any? = null
+
+    private fun updateBackHandling() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val wanted = lookups.canGoBack
+        val current = backCallback as OnBackInvokedCallback?
+        if (wanted && current == null) {
+            val callback = OnBackInvokedCallback {
+                lookups.back()
+                updateBackHandling()
+            }
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback)
+            backCallback = callback
+        } else if (!wanted && current != null) {
+            onBackInvokedDispatcher.unregisterOnBackInvokedCallback(current)
+            backCallback = null
+        }
+    }
+
+    // Only reached on Android 12 and older; newer versions use the OnBackInvokedCallback above.
+    @SuppressLint("GestureBackNavigation")
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (!lookups.back()) {
+            @Suppress("DEPRECATION")
+            super.onBackPressed()
+        }
     }
 
     override fun onDestroy() {

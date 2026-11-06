@@ -60,7 +60,11 @@ class ResultPresenterTest {
 
     @Test
     fun kanjiEntryShowsReadingsMeaningsAndKeyFacts() {
-        val body = present(words, kanjidic).kanji.single().body.toString()
+        val raw = present(words, kanjidic).kanji.single().body.toString()
+        // Readings and facts don't wrap inside.
+        assertTrue(raw.contains("つ\u2060よ\u2060い"))
+        assertTrue(raw.contains("11\u00A0strokes"))
+        val body = raw.replace("\u2060", "").replace('\u00A0', ' ')
         assertEquals(
             """
             strong
@@ -77,9 +81,12 @@ class ResultPresenterTest {
     @Test
     fun okuriganaIsMuted() {
         val body = present(words, kanjidic).kanji.single().body as Spanned
-        val i = body.indexOf("つよい") + 2
-        assertTrue(body.getSpans(i, i + 1, android.text.style.ForegroundColorSpan::class.java).isNotEmpty())
-        assertTrue(body.getSpans(i - 2, i - 1, android.text.style.ForegroundColorSpan::class.java).isEmpty())
+        // つ, よ (as is), い (muted), with word joiners between.
+        val start = body.indexOf("つ\u2060よ\u2060い")
+        fun muted(i: Int) = body.getSpans(i, i + 1, android.text.style.ForegroundColorSpan::class.java).isNotEmpty()
+        assertFalse(muted(start))
+        assertFalse(muted(start + 2))
+        assertTrue(muted(start + 4))
     }
 
     @Test

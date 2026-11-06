@@ -186,7 +186,7 @@ class ResultPresenter(private val theme: RenderTheme, private val prefs: Prefs, 
         if (on.isNotEmpty()) {
             newLine()
             muted("On  ")
-            sb.append(on.joinToString("、"))
+            sb.append(on.joinToString("、") { unbroken(it) })
         }
         val kun = k.kunyomi.split(' ').filter { it.isNotEmpty() }
         if (kun.isNotEmpty()) {
@@ -197,20 +197,23 @@ class ResultPresenter(private val theme: RenderTheme, private val prefs: Prefs, 
                 // The okurigana (after the dot) in muted color: つよ.い → つよい.
                 val dot = reading.indexOf('.')
                 if (dot < 0) {
-                    sb.append(reading)
+                    sb.append(unbroken(reading))
                 } else {
-                    sb.append(reading, 0, dot)
-                    muted(reading.substring(dot + 1))
+                    sb.append(unbroken(reading.substring(0, dot))).append(WORD_JOINER)
+                    muted(unbroken(reading.substring(dot + 1)))
                 }
             }
         }
         val facts = kanjiFacts(k)
         if (facts.isNotEmpty()) {
             newLine()
-            muted(facts.joinToString("  ·  "), 0.85f)
+            muted(facts.joinToString("  ·  ") { it.replace(' ', '\u00A0') }, 0.85f)
         }
         return RenderedKanji(k.character, sb, k.dictionary.title)
     }
+
+    /** [s] kept on one line: Japanese text otherwise wraps between any two characters. */
+    private fun unbroken(s: String): String = s.toList().joinToString(WORD_JOINER)
 
     /**
      * The stats of [k] worth showing: strokes, school grade, JLPT level, frequency rank, and other
@@ -308,6 +311,7 @@ class ResultPresenter(private val theme: RenderTheme, private val prefs: Prefs, 
     companion object {
         private val DOWNSTEP = 0xA71C.toChar().toString()
         private val REVISION_SUFFIX = Regex("\\s*\\[[^\\]]*]\\s*$")
+        private const val WORD_JOINER = "\u2060"
         private val KANJI_FACTS = setOf("strokes", "grade", "jlpt", "freq")
         private val SMALL_KANA = "ゃゅょぁぃぅぇぉゎャュョァィゥェォヮ".toSet()
         private val TONE_COLORS = listOf(null, 0xFFE53935.toInt(), 0xFF43A047.toInt(), 0xFF1E88E5.toInt(), 0xFF8E24AA.toInt(), 0xFF757575.toInt())
