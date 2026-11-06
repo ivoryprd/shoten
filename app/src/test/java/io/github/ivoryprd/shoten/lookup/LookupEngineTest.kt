@@ -36,6 +36,8 @@ class LookupEngineTest {
         termMeta("食べる", "freq", """{"reading":"たべる","frequency":500}""")
         termMeta("行く", "pitch", """{"reading":"ゆく","pitches":[{"position":0}]}""")
         kanji("食", "ショク", "た.べる", "", "[\"eat\"]", "{}")
+        kanji("強", "キョウ", "つよ.い", "", "[\"strong\"]", "{}")
+        kanji("勉", "ベン", "", "", "[\"exertion\"]", "{}")
     }
 
     private val engine = LookupEngine(MemoryTermSource(listOf(dict)))
@@ -129,5 +131,23 @@ class LookupEngineTest {
         assertTrue(engine.lookup("", Language.JAPANESE).isEmpty)
         assertTrue(engine.lookup("。食べる", Language.JAPANESE).isEmpty)
         assertTrue(engine.lookup("xyz", Language.JAPANESE).isEmpty)
+    }
+
+    @Test
+    fun kanjiOfTheWordFound() {
+        // Every kanji of the longest match, in order; not those after it.
+        val r = engine.lookup("勉強した食", Language.JAPANESE)
+        assertEquals(listOf("勉", "強"), r.kanji.map { it.character })
+        // With no word found, the first character's.
+        assertEquals(listOf("強"), engine.lookup("強", Language.JAPANESE).kanji.map { it.character })
+        assertTrue(engine.lookup("食べ物", Language.CHINESE).kanji.isEmpty())
+    }
+
+    @Test
+    fun looksUpSingleKanji() {
+        val r = engine.lookupKanji("強")
+        assertTrue(r.groups.isEmpty())
+        assertEquals("strong", r.kanji.single().meanings.single())
+        assertTrue(engine.lookupKanji("猫").isEmpty)
     }
 }

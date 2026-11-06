@@ -85,14 +85,20 @@ first), set the language, show attribution, and delete. Jitendex (and other dict
 an update URL) and CC-CEDICT are checked for updates once a day when the screen is opened (the main
 screen checks weekly and says when there are updates); **Update** or **Update all** installs them.
 
-More Yomitan dictionaries — frequency lists (JPDB, BCCWJ), pitch accents (Kanjium), kanji dictionaries
-(KANJIDIC), other bilingual dictionaries — are listed at
+**Get KANJIDIC** installs [KANJIDIC](https://www.edrdg.org/wiki/index.php/KANJIDIC_Project) (over
+10,000 kanji, from the [jmdict-yomitan](https://github.com/yomidevs/jmdict-yomitan) builds, which are
+updated with it). Japanese lookups then also show the kanji of the word found: meanings, on and kun
+readings (okurigana in gray), stroke count, school grade or jōyō/jinmeiyō, old JLPT level and frequency
+rank. Tap a kanji in a headword to open just that kanji; back returns to the word.
+
+More Yomitan dictionaries — frequency lists (JPDB, BCCWJ), pitch accents (Kanjium), other kanji
+dictionaries, other bilingual dictionaries — are listed at
 [MarvNC/yomitan-dictionaries](https://github.com/MarvNC/yomitan-dictionaries). Download the .zip and use
 **Import a dictionary file**. See [docs/yomitan.md](docs/yomitan.md) for what is supported and what is
 planned.
 
 Each dictionary keeps its own license; Shoten shows the attribution included with it. Jitendex and
-CC-CEDICT are licensed under CC BY-SA 4.0.
+CC-CEDICT are licensed under CC BY-SA 4.0, KANJIDIC under CC BY-SA 4.0 (EDRDG).
 
 ## Privacy
 

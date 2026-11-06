@@ -41,8 +41,11 @@ class LookupController(
     private var presenter: ResultPresenter? = null
     private var presenterScale = 0f
     private var job: Job? = null
-    private val history = ArrayList<Pair<String, Language>>()
-    private var current: Pair<String, Language>? = null
+    /** A lookup: of text, or of a single kanji in the kanji dictionaries. */
+    private data class Query(val text: String, val language: Language, val kanji: Boolean = false)
+
+    private val history = ArrayList<Query>()
+    private var current: Query? = null
 
     val canGoBack: Boolean get() = history.isNotEmpty()
 
@@ -59,12 +62,12 @@ class LookupController(
     /** Looks up [text]. A new top-level lookup clears the link history. */
     fun lookup(text: String, language: Language) {
         history.clear()
-        run(text, language, nested = false)
+        run(Query(text, language), nested = false)
     }
 
     fun back(): Boolean {
         val previous = history.removeLastOrNull() ?: return false
-        run(previous.first, previous.second, nested = history.isNotEmpty())
+        run(previous, nested = history.isNotEmpty())
         return true
     }
 
@@ -73,14 +76,15 @@ class LookupController(
         job = null
     }
 
-    private fun run(text: String, language: Language, nested: Boolean) {
-        current = text to language
+    private fun run(query: Query, nested: Boolean) {
+        val (text, language) = query
+        current = query
         job?.cancel()
         val presenter = presenter()
         job = scope.launch {
             val rendered: RenderedResult = try {
                 withContext(app.lookupDispatcher) {
-                    val result = app.lookupEngine.lookup(text, language)
+                    val result = if (query.kanji) app.lookupEngine.lookupKanji(text) else app.lookupEngine.lookup(text, language)
                     presenter.present(result)
                 }
             } catch (e: CancellationException) {
@@ -101,7 +105,14 @@ class LookupController(
     override fun onLookup(query: String) {
         val cur = current ?: return
         history.add(cur)
-        run(query, cur.second, nested = true)
+        run(Query(query, cur.language), nested = true)
+    }
+
+    override fun onLookupKanji(character: String) {
+        val cur = current ?: return
+        if (cur.kanji && cur.text == character) return
+        history.add(cur)
+        run(Query(character, Language.JAPANESE, kanji = true), nested = true)
     }
 
     override fun onOpenUrl(url: String) {

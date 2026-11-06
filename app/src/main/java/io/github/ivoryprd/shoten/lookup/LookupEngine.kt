@@ -58,14 +58,20 @@ class LookupEngine(private val source: TermSource) {
         val sorted = best.values.sortedWith(MATCH_ORDER)
         val groups = group(sorted, maxGroups)
         val withMeta = attachMeta(groups, language)
+        // The kanji of the word found (or of the first character, if none is), in order.
         val kanji = if (japanese) {
-            val first = String(Character.toChars(text.codePointAt(0)))
-            if (Cjk.isHan(first.codePointAt(0))) source.findKanji(listOf(first)) else emptyList()
+            val word = text.take(groups.maxOfOrNull { it.sourceLength }?.takeIf { it > 0 } ?: Character.charCount(text.codePointAt(0)))
+            val characters = Cjk.codePoints(word).filter { Cjk.isHan(it) }.map { String(Character.toChars(it)) }.distinct().toList()
+            if (characters.isEmpty()) emptyList() else source.findKanji(characters).sortedBy { characters.indexOf(it.character) }
         } else {
             emptyList()
         }
         return LookupResult(text, language, withMeta, kanji)
     }
+
+    /** The entries of kanji dictionaries for [character]. */
+    fun lookupKanji(character: String): LookupResult =
+        LookupResult(character, Language.JAPANESE, emptyList(), source.findKanji(listOf(character)))
 
     private fun put(best: MutableMap<String, TermMatch>, match: TermMatch) {
         val key = match.row.dictionary.id + ':' + match.row.rowId

@@ -94,6 +94,18 @@ class ImportersTest {
     }
 
     @Test
+    fun kanjiDictionariesAreJapanese() {
+        // As KANJIDIC: kanji only, no language declared.
+        val file = zip(
+            "index.json" to """{"title":"KANJIDIC [2026-310]","revision":"kanjidic2.2026-310","format":3}""",
+            "kanji_bank_1.json" to """[["強","キョウ ゴウ","つよ.い","jouyou",["strong"],{"strokes":"11"}]]""",
+        )
+        val dict = MemoryDictionary("d")
+        assertEquals(Language.JAPANESE, YomitanImporter.import(file, dict).sourceLanguage)
+        assertEquals("強", dict.kanji.single().character)
+    }
+
+    @Test
     fun rejectsInvalidZips() {
         for (files in listOf(
             arrayOf("readme.txt" to "x"),

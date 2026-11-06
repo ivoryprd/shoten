@@ -8,13 +8,17 @@ import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.annotation.SuppressLint
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.text.Spanned
 import android.text.TextUtils
 import android.text.method.LinkMovementMethod
 import android.util.TypedValue
+import android.view.GestureDetector
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -96,6 +100,8 @@ class ResultsView(context: Context) : LinearLayout(context) {
             textLocale = g.locale
             setLineSpacing(0f, 1.05f)
         }
+        // Its kanji open their entries (see ResultPresenter).
+        if ((g.header as? Spanned)?.getSpans(0, g.header.length, ActionSpan::class.java)?.isNotEmpty() == true) onCharTapped(header)
         headerRow.addView(header, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         headerRow.addView(ui.iconButton(R.drawable.ic_copy, context.getString(R.string.action_copy)) { copy(g.copyText) })
         container.addView(headerRow)
@@ -223,6 +229,52 @@ class ResultsView(context: Context) : LinearLayout(context) {
         column.addView(ui.text(k.dictionaryTitle, 11f * textScale, ui.muted).apply { setPadding(0, ui.dp(4), 0, 0) })
         row.addView(column, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         return row
+    }
+
+    /**
+     * Makes taps on characters of [view] with an [ActionSpan] run it. Unlike [LinkMovementMethod],
+     * this finds the character tapped within ruby too (where the layout knows only the whole
+     * base text): CJK characters are as wide as each other.
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun onCharTapped(view: TextView) {
+        val detector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent) = true
+
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                val text = view.text as? Spanned ?: return false
+                val index = charAt(view, text, e.x, e.y) ?: return false
+                val span = text.getSpans(index, index + 1, ActionSpan::class.java).firstOrNull() ?: return false
+                span.onClick(view)
+                return true
+            }
+        })
+        view.setOnTouchListener { _, e -> detector.onTouchEvent(e) }
+    }
+
+    private fun charAt(view: TextView, text: Spanned, x: Float, y: Float): Int? {
+        val layout = view.layout ?: return null
+        val line = layout.getLineForVertical((y - view.totalPaddingTop + view.scrollY).toInt())
+        val h = x - view.totalPaddingLeft + view.scrollX
+        if (h < layout.getLineLeft(line) || h > layout.getLineRight(line)) return null
+        val lineStart = layout.getLineStart(line)
+        val lineEnd = layout.getLineEnd(line)
+        fun position(offset: Int) = if (offset >= lineEnd) layout.getLineRight(line) else layout.getPrimaryHorizontal(offset)
+        for (ruby in text.getSpans(lineStart, lineEnd, RubySpan::class.java)) {
+            val a = text.getSpanStart(ruby)
+            val b = text.getSpanEnd(ruby)
+            val x0 = position(a)
+            val x1 = position(b)
+            if (h < x0 || h >= x1) continue
+            // The base text, centered under its ruby.
+            val base = view.paint.measureText(text, a, b)
+            val left = (x0 + x1 - base) / 2
+            val k = ((h - left) / base * (b - a)).toInt().coerceIn(0, b - a - 1)
+            return if (k > 0 && Character.isLowSurrogate(text[a + k])) a + k - 1 else a + k
+        }
+        val offset = layout.getOffsetForHorizontal(line, h)
+        val index = if (offset > lineStart && (offset >= lineEnd || h < position(offset))) offset - 1 else offset
+        return index.takeIf { it < text.length }?.let { if (it > 0 && Character.isLowSurrogate(text[it])) it - 1 else it }
     }
 
     private fun copy(text: String) {

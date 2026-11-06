@@ -16,6 +16,7 @@ import io.github.ivoryprd.shoten.lookup.LookupResult
 import io.github.ivoryprd.shoten.lookup.Pinyin
 import io.github.ivoryprd.shoten.lookup.TermGroup
 import io.github.ivoryprd.shoten.lookup.TermMetaRow
+import io.github.ivoryprd.shoten.util.Cjk
 import java.util.Locale
 
 class RenderedEntry(val dictionaryTitle: String, val tags: CharSequence?, val blocks: List<GlossBlock>)
@@ -36,16 +37,18 @@ class RenderedKanji(val character: String, val body: CharSequence, val dictionar
 class RenderedResult(val result: LookupResult, val groups: List<RenderedGroup>, val kanji: List<RenderedKanji>)
 
 /** Prepares lookup results for display (safe to call off the main thread). */
-class ResultPresenter(private val theme: RenderTheme, private val prefs: Prefs, links: LinkHandler) {
+class ResultPresenter(private val theme: RenderTheme, private val prefs: Prefs, private val links: LinkHandler) {
     private val glossary = GlossaryRenderer(theme, links)
 
     fun present(result: LookupResult, maxGroups: Int = Int.MAX_VALUE): RenderedResult {
-        val groups = result.groups.take(maxGroups).map { presentGroup(it, result.language) }
+        // Kanji in headwords open their entries if there is a kanji dictionary.
+        val kanjiLinks = result.kanji.isNotEmpty()
+        val groups = result.groups.take(maxGroups).map { presentGroup(it, result.language, kanjiLinks) }
         val kanji = result.kanji.map { presentKanji(it) }
         return RenderedResult(result, groups, kanji)
     }
 
-    private fun presentGroup(g: TermGroup, language: Language): RenderedGroup {
+    private fun presentGroup(g: TermGroup, language: Language, kanjiLinks: Boolean): RenderedGroup {
         val chinese = language == Language.CHINESE || g.entries.first().row.dictionary.language == Language.CHINESE
         val locale = when {
             !chinese -> Locale.JAPANESE
@@ -69,6 +72,18 @@ class ResultPresenter(private val theme: RenderTheme, private val prefs: Prefs, 
                 header.append(segment.text)
                 if (segment.ruby != null) {
                     header.setSpan(RubySpan(segment.ruby, 0.5f, theme.mutedColor), s, header.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+            }
+            if (kanjiLinks) {
+                var i = 0
+                while (i < header.length) {
+                    val cp = Character.codePointAt(header, i)
+                    val n = Character.charCount(cp)
+                    if (Cjk.isHan(cp)) {
+                        val character = String(Character.toChars(cp))
+                        header.setSpan(ActionSpan(null, false) { links.onLookupKanji(character) }, i, i + n, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
+                    i += n
                 }
             }
         }
@@ -153,29 +168,76 @@ class ResultPresenter(private val theme: RenderTheme, private val prefs: Prefs, 
 
     private fun presentKanji(k: KanjiRow): RenderedKanji {
         val sb = SpannableStringBuilder()
-        fun line(label: String, value: String) {
-            if (value.isBlank()) return
+        fun muted(text: String, size: Float = 1f) {
+            val s = sb.length
+            sb.append(text)
+            sb.setSpan(ForegroundColorSpan(theme.mutedColor), s, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            if (size != 1f) sb.setSpan(RelativeSizeSpan(size), s, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        fun newLine() {
             if (sb.isNotEmpty()) sb.append('\n')
-            val s = sb.length
-            sb.append(label).append("  ")
-            sb.setSpan(ForegroundColorSpan(theme.mutedColor), s, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            sb.append(value)
         }
-        line("On", k.onyomi.split(' ').filter { it.isNotEmpty() }.joinToString("、"))
-        line("Kun", k.kunyomi.split(' ').filter { it.isNotEmpty() }.joinToString("、"))
-        line("", k.meanings.joinToString("; "))
-        val stats = k.stats.entries.joinToString("  ") { (key, v) ->
-            val label = k.dictionary.tag(key)?.notes?.takeIf { it.isNotBlank() } ?: key
-            "$label: $v"
-        }
-        if (stats.isNotEmpty()) {
-            sb.append('\n')
+        if (k.meanings.isNotEmpty()) {
             val s = sb.length
-            sb.append(stats)
-            sb.setSpan(ForegroundColorSpan(theme.mutedColor), s, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            sb.setSpan(RelativeSizeSpan(0.85f), s, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            sb.append(k.meanings.joinToString("; "))
+            sb.setSpan(StyleSpan(Typeface.BOLD), s, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        val on = k.onyomi.split(' ').filter { it.isNotEmpty() }
+        if (on.isNotEmpty()) {
+            newLine()
+            muted("On  ")
+            sb.append(on.joinToString("、"))
+        }
+        val kun = k.kunyomi.split(' ').filter { it.isNotEmpty() }
+        if (kun.isNotEmpty()) {
+            newLine()
+            muted("Kun  ")
+            kun.forEachIndexed { i, reading ->
+                if (i > 0) sb.append("、")
+                // The okurigana (after the dot) in muted color: つよ.い → つよい.
+                val dot = reading.indexOf('.')
+                if (dot < 0) {
+                    sb.append(reading)
+                } else {
+                    sb.append(reading, 0, dot)
+                    muted(reading.substring(dot + 1))
+                }
+            }
+        }
+        val facts = kanjiFacts(k)
+        if (facts.isNotEmpty()) {
+            newLine()
+            muted(facts.joinToString("  ·  "), 0.85f)
         }
         return RenderedKanji(k.character, sb, k.dictionary.title)
+    }
+
+    /**
+     * The stats of [k] worth showing: strokes, school grade, JLPT level, frequency rank, and other
+     * general ones; not the indices of other dictionaries and the codes of classifications
+     * (KANJIDIC has dozens).
+     */
+    private fun kanjiFacts(k: KanjiRow): List<String> {
+        val out = ArrayList<String>()
+        val stats = k.stats
+        stats["strokes"]?.let { out += "$it strokes" }
+        val grade = stats["grade"]?.toIntOrNull()
+        val tags = k.tags.split(' ')
+        when {
+            grade != null && grade in 1..6 -> out += "Grade $grade"
+            grade == 8 || "jouyou" in tags -> out += "Jōyō"
+            grade == 9 || grade == 10 || "jinmeiyou" in tags -> out += "Jinmeiyō"
+        }
+        // KANJIDIC still has the levels of the old JLPT (1–4).
+        stats["jlpt"]?.let { out += "JLPT $it (old)" }
+        stats["freq"]?.let { out += "Frequency #$it" }
+        for ((key, value) in stats) {
+            if (key in KANJI_FACTS) continue
+            val tag = k.dictionary.tag(key)
+            if (tag != null && tag.category != "misc") continue
+            out += "${tag?.notes?.takeIf { it.isNotBlank() } ?: key}: $value"
+        }
+        return out
     }
 
     private fun pinyin(reading: String, numbered: Boolean): CharSequence {
@@ -246,6 +308,7 @@ class ResultPresenter(private val theme: RenderTheme, private val prefs: Prefs, 
     companion object {
         private val DOWNSTEP = 0xA71C.toChar().toString()
         private val REVISION_SUFFIX = Regex("\\s*\\[[^\\]]*]\\s*$")
+        private val KANJI_FACTS = setOf("strokes", "grade", "jlpt", "freq")
         private val SMALL_KANA = "ゃゅょぁぃぅぇぉゎャュョァィゥェォヮ".toSet()
         private val TONE_COLORS = listOf(null, 0xFFE53935.toInt(), 0xFF43A047.toInt(), 0xFF1E88E5.toInt(), 0xFF8E24AA.toInt(), 0xFF757575.toInt())
         private val MARKED_TONES: Map<Char, Int> = buildMap {

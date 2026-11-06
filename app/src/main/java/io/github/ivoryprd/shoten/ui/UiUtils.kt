@@ -18,11 +18,14 @@ import io.github.ivoryprd.shoten.dict.ImportService
 object KnownDictionaries {
     const val JITENDEX_URL = "https://github.com/stephenmk/stephenmk.github.io/releases/latest/download/jitendex-yomitan.zip"
     const val CEDICT_URL = DictionaryUpdates.CEDICT_URL
+    const val KANJIDIC_URL = "https://github.com/yomidevs/jmdict-yomitan/releases/latest/download/KANJIDIC_english.zip"
     const val MORE_DICTIONARIES_URL = "https://github.com/MarvNC/yomitan-dictionaries"
 
     fun downloadJitendex(context: Context) = ImportService.download(context, JITENDEX_URL, "Jitendex")
 
     fun downloadCedict(context: Context) = ImportService.download(context, CEDICT_URL, "CC-CEDICT")
+
+    fun downloadKanjidic(context: Context) = ImportService.download(context, KANJIDIC_URL, "KANJIDIC")
 
     /** Downloads and installs [update] in place of the dictionary it updates. */
     fun applyUpdate(context: Context, update: DictionaryUpdates.Update) {

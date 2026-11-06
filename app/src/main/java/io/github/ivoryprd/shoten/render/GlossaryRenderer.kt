@@ -54,6 +54,10 @@ sealed class GlossBlock {
 /** What happens when links in rendered content are tapped. */
 interface LinkHandler {
     fun onLookup(query: String)
+
+    /** Shows the kanji dictionaries' entries for [character]. */
+    fun onLookupKanji(character: String) {}
+
     fun onOpenUrl(url: String)
     fun onShowNote(text: String)
 }

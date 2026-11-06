@@ -66,6 +66,7 @@ object YomitanImporter {
             val totalBytes = banks.sumOf { maxOf(it.third.size, 1L) }.toFloat()
             var doneBytes = 0L
             val detector = LanguageDetector()
+            var hasKanji = false
             for ((kind, _, entry) in banks) {
                 val counting = CountingInputStream(zip.getInputStream(entry))
                 val reader = JsonReader(BufferedReader(InputStreamReader(counting, Charsets.UTF_8), 64 * 1024))
@@ -78,7 +79,10 @@ object YomitanImporter {
                         when (kind) {
                             "term_bank" -> readTermBank(it, format, sink, detector, report)
                             "term_meta_bank" -> readMetaBank(it, report) { e, m, d -> sink.termMeta(e, m, d) }
-                            "kanji_bank" -> readKanjiBank(it, format, sink, report)
+                            "kanji_bank" -> {
+                                readKanjiBank(it, format, sink, report)
+                                hasKanji = true
+                            }
                             "kanji_meta_bank" -> readMetaBank(it, report) { e, m, d -> sink.kanjiMeta(e, m, d) }
                             "tag_bank" -> readTagBank(it, sink)
                         }
@@ -96,11 +100,13 @@ object YomitanImporter {
             importMedia(zip, base, sink)
 
             val declared = Language.fromCode(index.string("sourceLanguage"))
+            // Kanji dictionaries (KANJIDIC) have no terms to tell by: kanji with on and kun readings are Japanese.
+            val detected = detector.result().let { if (it == Language.OTHER && hasKanji) Language.JAPANESE else it }
             val metadata = DictionaryMetadata(
                 title = title,
                 revision = revision,
                 format = format,
-                sourceLanguage = if (declared != Language.OTHER) declared else detector.result(),
+                sourceLanguage = if (declared != Language.OTHER) declared else detected,
                 targetLanguage = index.string("targetLanguage"),
                 author = index.string("author"),
                 url = index.string("url"),

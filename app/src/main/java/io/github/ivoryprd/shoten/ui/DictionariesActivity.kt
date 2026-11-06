@@ -37,6 +37,7 @@ class DictionariesActivity : Activity() {
     private lateinit var list: LinearLayout
     private lateinit var jitendexCard: View
     private lateinit var cedictCard: View
+    private lateinit var kanjidicCard: View
     private lateinit var progressCard: LinearLayout
     private lateinit var updatesCard: LinearLayout
     private lateinit var updatesText: TextView
@@ -89,6 +90,10 @@ class DictionariesActivity : Activity() {
             withNotificationPermission { KnownDictionaries.downloadCedict(this) }
         }
         content.addView(cedictCard)
+        kanjidicCard = actionCard(getString(R.string.get_kanjidic), getString(R.string.get_kanjidic_summary)) {
+            withNotificationPermission { KnownDictionaries.downloadKanjidic(this) }
+        }
+        content.addView(kanjidicCard)
         val importCard = actionCard(getString(R.string.import_file), getString(R.string.import_file_summary)) { pickFile() }
         importCard.addView(Button(this, null, android.R.attr.borderlessButtonStyle).apply {
             text = getString(R.string.more_dictionaries)
@@ -218,6 +223,7 @@ class DictionariesActivity : Activity() {
         val installed = app.dictionaries.installed
         jitendexCard.visibility = if (installed.any { it.title.startsWith("Jitendex") }) View.GONE else View.VISIBLE
         cedictCard.visibility = if (installed.any { it.title == "CC-CEDICT" }) View.GONE else View.VISIBLE
+        kanjidicCard.visibility = if (installed.any { it.kanji > 0 }) View.GONE else View.VISIBLE
         list.removeAllViews()
         if (installed.isEmpty()) {
             list.addView(body(getString(R.string.dictionaries_empty)).apply { setPadding(dp(4), 0, 0, 0) })

@@ -32,6 +32,8 @@
     <string name="get_jitendex">Get Jitendex (Japanese → English)</string>
     <string name="get_jitendex_summary">Free, modern Japanese dictionary based on JMdict. About 40 MB download, 100 MB installed.</string>
     <string name="get_cedict">Get CC-CEDICT (Chinese → English)</string>
+    <string name="get_kanjidic">Get KANJIDIC (kanji → English)</string>
+    <string name="get_kanjidic_summary">Readings, meanings, stroke counts and grades of over 10,000 kanji, shown with Japanese lookups. Tap a kanji in a result to open it. About 1 MB download.</string>
     <string name="get_cedict_summary">Free Chinese dictionary with simplified and traditional characters. About 4 MB download.</string>
     <string name="import_file">Import a dictionary file</string>
     <string name="import_file_summary">Yomitan dictionaries (.zip) — terms, frequencies, pitch accents and kanji — or CC-CEDICT files.</string>
