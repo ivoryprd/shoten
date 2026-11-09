@@ -92,7 +92,9 @@
     <string name="status_no_text">No text found.</string>
     <string name="status_ocr_failed">Text recognition failed: %1$s</string>
     <string name="status_downloading_model">Downloading the text recognition model… %1$s</string>
-    <string name="status_model_failed">Couldn’t download the text recognition model. %1$s</string>
+    <string name="status_model_waiting">Google Play services hasn’t downloaded the text recognition model yet. It may be waiting for Wi‑Fi or for an update of Play services (check the Play Store). The offline version of Shoten has the model built in.</string>
+    <string name="status_model_unusable">The text recognition model is installed but can’t be loaded yet. Try again in a moment; if this keeps happening, restart the phone or use the offline version of Shoten.</string>
+    <string name="status_model_failed">Google Play services couldn’t download the text recognition model (%1$s). Check the connection and update Google Play services in the Play Store, or use the offline version of Shoten, which has the model built in.</string>
     <string name="status_no_japanese_dictionary">No Japanese dictionary installed.</string>
     <string name="status_no_chinese_dictionary">No Chinese dictionary installed.</string>
     <string name="error_no_screenshot">Shoten didn’t get a screenshot. Turn on “Use text from screen” and “Use screenshot” in the digital assistant settings. Some apps (banking, DRM video) block screenshots.</string>

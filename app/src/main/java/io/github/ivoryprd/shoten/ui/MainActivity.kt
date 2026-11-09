@@ -288,6 +288,8 @@ class MainActivity : Activity() {
             }) { ok, error ->
                 if (isDestroyed) return@install
                 if (ok) {
+                    // The recognizer made before the download may not see the model.
+                    app.ocr.forget(script)
                     next()
                 } else {
                     ocrDownloading = false

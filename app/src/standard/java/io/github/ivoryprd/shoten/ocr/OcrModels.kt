@@ -42,7 +42,7 @@ object OcrModels {
                 }
                 ModuleInstallStatusUpdate.InstallState.STATE_FAILED,
                 ModuleInstallStatusUpdate.InstallState.STATE_CANCELED -> {
-                    if (!finished) { finished = true; onDone(false, "Download failed (${update.errorCode})") }
+                    if (!finished) { finished = true; onDone(false, "error ${update.errorCode}") }
                     client.unregisterListener(listener)
                 }
             }

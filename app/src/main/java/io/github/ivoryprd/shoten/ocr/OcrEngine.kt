@@ -249,6 +249,15 @@ class OcrEngine(private val prefs: Prefs) {
         }
     }
 
+    /**
+     * Drops the recognizer for [script], so the next recognition creates a new one: one created
+     * before Play services downloaded its model can go on reporting it unavailable.
+     */
+    fun forget(script: OcrScript) {
+        val old = synchronized(this) { recognizers.remove(script) } ?: return
+        runCatching { old.close() }
+    }
+
     /** Releases all models (e.g. when the system is low on memory). */
     fun release() {
         val closing = synchronized(this) {

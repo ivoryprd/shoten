@@ -295,6 +295,7 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
     fun release() {
         released = true
         removeCallbacks(ocrTimeout)
+        modelStall?.let { removeCallbacks(it) }
         lookups.cancel()
         ocrJob?.cancel()
         scope.cancel()
@@ -374,29 +375,66 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
         }
     }
 
+    /** Downloads of the model asked for in this session; reset when text is recognized. */
+    private var modelAttempts = 0
+    private var modelStall: Runnable? = null
+
     private fun onModelMissing(script: OcrScript) {
         if (!OcrModels.DOWNLOADED_BY_PLAY_SERVICES) {
             screenshot.stopScanning()
             showStatus(context.getString(R.string.status_ocr_failed, "model unavailable"))
             return
         }
+        // Play services can say the model is installed while the recognizer still can't load it:
+        // asking again and again would say "Downloading" forever.
+        if (++modelAttempts > MAX_MODEL_ATTEMPTS) {
+            screenshot.stopScanning()
+            showStatus(context.getString(R.string.status_model_unusable), context.getString(R.string.action_try_again)) {
+                modelAttempts = 0
+                runOcr(firstPass = false)
+            }
+            return
+        }
         showStatus(context.getString(R.string.status_downloading_model, ""))
+        // Play services may hold the download back (waiting for Wi-Fi, or for its own update)
+        // without a word: say so after a while, but keep waiting for it.
+        fun watchStall() {
+            modelStall?.let { removeCallbacks(it) }
+            modelStall = Runnable {
+                if (!released) showStatus(context.getString(R.string.status_model_waiting), context.getString(R.string.action_try_again)) {
+                    modelAttempts = 0
+                    app.ocr.forget(script)
+                    runOcr(firstPass = false)
+                }
+            }.also { postDelayed(it, MODEL_STALL) }
+        }
+        watchStall()
+        var lastPercent = -2
         OcrModels.install(context, app.ocr.recognizer(script), { percent ->
-            if (!released) {
+            if (!released && percent != lastPercent) {
+                lastPercent = percent
+                watchStall()
                 showStatus(context.getString(R.string.status_downloading_model, if (percent >= 0) "$percent%" else ""))
             }
         }) { ok, error ->
+            modelStall?.let { removeCallbacks(it) }
             if (released) return@install
             if (ok) {
-                runOcr(firstPass = false)
+                // A new recognizer, given Play services a moment to load the model the first time it didn't.
+                app.ocr.forget(script)
+                postDelayed({ if (!released) runOcr(firstPass = false) }, (modelAttempts - 1) * 2000L)
             } else {
                 screenshot.stopScanning()
-                showStatus(context.getString(R.string.status_model_failed, error ?: ""))
+                showStatus(context.getString(R.string.status_model_failed, error ?: ""), context.getString(R.string.action_try_again)) {
+                    modelAttempts = 0
+                    runOcr(firstPass = false)
+                }
             }
         }
     }
 
     private fun onOcrResult(result: OcrResult) {
+        modelAttempts = 0
         screenshot.showResult(result)
         when {
             result.isEmpty -> showStatus(context.getString(R.string.status_no_text), context.getString(R.string.action_switch_language)) { switchLanguage() }
@@ -846,6 +884,8 @@ class ScreenLookupView(context: Context, private val host: Host) : FrameLayout(c
 
         /** How long recognition may take before the user is told (it takes a few seconds at most). */
         private const val OCR_TIMEOUT = 40_000L
+        private const val MAX_MODEL_ATTEMPTS = 3
+        private const val MODEL_STALL = 45_000L
 
         /** How many characters of the scanned text can be corrected. */
         private const val CORRECTION_CHARS = 12
