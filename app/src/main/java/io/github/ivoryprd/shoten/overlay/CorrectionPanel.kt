@@ -8,6 +8,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.OvershootInterpolator
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -40,6 +41,9 @@ class CorrectionPanel(context: Context, private val ui: ResultsView.Ui, private 
     private val label = ui.text("", 13f, ui.muted)
     private val suggestions = FlowLayout(context, ui.dp(6))
     private var selected = -1
+    /** The suggestions shown, so that only new ones pop in when more are found. */
+    private var shown = emptySet<String>()
+    private var deleteShown = false
 
     init {
         orientation = VERTICAL
@@ -67,7 +71,15 @@ class CorrectionPanel(context: Context, private val ui: ResultsView.Ui, private 
         // Keep the selected character in sight.
         scroll.post { chars.getChildAt(selected)?.let { scroll.smoothScrollTo(max(0, it.left - ui.dp(48)), 0) } }
         suggestions.removeAllViews()
+        shown = emptySet()
+        deleteShown = false
         label.text = context.getString(R.string.correction_loading)
+        // The selected key presses in.
+        chars.getChildAt(selected)?.apply {
+            scaleX = 0.85f
+            scaleY = 0.85f
+            animate().scaleX(1f).scaleY(1f).setDuration(220).setInterpolator(OvershootInterpolator(2.5f)).start()
+        }
     }
 
     /** Shows what the selected character may be; unless [final], more are still being looked for. */
@@ -80,12 +92,15 @@ class CorrectionPanel(context: Context, private val ui: ResultsView.Ui, private 
                 else -> R.string.correction_suggestions
             },
         )
+        var popped = 0
         for (s in list) {
             suggestions.addView(key(s.text, if (s.makesWord) Style.WORD else Style.PLAIN) { listener.onCorrect(selected, s.text) }.apply {
                 contentDescription = if (s.makesWord) context.getString(R.string.correction_makes_word, s.text) else s.text
+                if (s.text !in shown) popIn(popped++)
             }, keyParams())
         }
-        val delete = ImageView(context).apply {
+        shown = list.mapTo(HashSet()) { it.text }
+        val deleteKey = ImageView(context).apply {
             setImageResource(R.drawable.ic_backspace)
             setColorFilter(ui.muted)
             scaleType = ImageView.ScaleType.CENTER
@@ -93,7 +108,18 @@ class CorrectionPanel(context: Context, private val ui: ResultsView.Ui, private 
             contentDescription = context.getString(R.string.action_delete_character)
             setOnClickListener { listener.onCorrect(selected, null) }
         }
-        suggestions.addView(delete, keyParams())
+        suggestions.addView(deleteKey, keyParams())
+        if (!deleteShown) deleteKey.popIn(popped)
+        deleteShown = true
+    }
+
+    /** Pops a new key in, a little after the [index] ones before it. */
+    private fun View.popIn(index: Int) {
+        alpha = 0f
+        scaleX = 0.6f
+        scaleY = 0.6f
+        animate().alpha(1f).scaleX(1f).scaleY(1f)
+            .setStartDelay(minOf(index, 12) * 18L).setDuration(200).setInterpolator(OvershootInterpolator(1.6f)).start()
     }
 
     private enum class Style { PLAIN, SELECTED, WORD }

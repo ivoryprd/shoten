@@ -19,6 +19,7 @@ import android.util.TypedValue
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.animation.DecelerateInterpolator
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -56,7 +57,10 @@ class ResultsView(context: Context) : LinearLayout(context) {
         })
     }
 
-    fun bind(rendered: RenderedResult, initialGroups: Int = 8) {
+    /** How new results come in: as they are, or sliding in from the side a link or back leads to. */
+    enum class Transition { NONE, FORWARD, BACK }
+
+    fun bind(rendered: RenderedResult, initialGroups: Int = 8, transition: Transition = Transition.NONE) {
         generation++
         removeAllViews()
         val groups = rendered.groups
@@ -70,6 +74,19 @@ class ResultsView(context: Context) : LinearLayout(context) {
             })
             rendered.kanji.forEach { addView(kanjiView(it)) }
         }
+        if (transition != Transition.NONE) {
+            val dx = ui.dp(28).toFloat() * if (transition == Transition.FORWARD) 1 else -1
+            for (i in 0 until childCount) getChildAt(i).enter(i, translationX = dx)
+        }
+    }
+
+    /** Fades the [index]th of some new views in from ([translationX], [translationY]), a little after the one before. */
+    private fun View.enter(index: Int, translationX: Float = 0f, translationY: Float = 0f) {
+        alpha = 0f
+        this.translationX = translationX
+        this.translationY = translationY
+        animate().alpha(1f).translationX(0f).translationY(0f)
+            .setStartDelay(minOf(index, 5) * 30L).setDuration(240).setInterpolator(DecelerateInterpolator(1.5f)).start()
     }
 
     private fun addMoreButton() {
@@ -81,7 +98,7 @@ class ResultsView(context: Context) : LinearLayout(context) {
         button.setOnClickListener {
             var insertAt = indexOfChild(button).let { if (it < 0) childCount else it }
             removeView(button)
-            for (g in pendingGroups) addView(groupView(g), insertAt++)
+            pendingGroups.forEachIndexed { i, g -> addView(groupView(g).apply { enter(i, translationY = ui.dp(12).toFloat()) }, insertAt++) }
             pendingGroups = emptyList()
         }
         addView(button, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))

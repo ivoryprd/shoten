@@ -14,6 +14,9 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.AccelerateInterpolator
+import android.view.ViewTreeObserver
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -224,12 +227,87 @@ class DictionariesActivity : Activity() {
         jitendexCard.visibility = if (installed.any { it.title.startsWith("Jitendex") }) View.GONE else View.VISIBLE
         cedictCard.visibility = if (installed.any { it.title == "CC-CEDICT" }) View.GONE else View.VISIBLE
         kanjidicCard.visibility = if (installed.any { it.kanji > 0 }) View.GONE else View.VISIBLE
+        // What the rows show, but whether each dictionary is on: switching one on or off only dims
+        // or brightens its row (rebuilding it would cut the switch's own animation short).
+        val keys = installed.map { d -> d.copy(enabled = true) to app.updates.available.firstOrNull { it.dictionary.id == d.id }?.revision }
+        if (keys == rowKeys && list.childCount == installed.size) {
+            installed.forEachIndexed { i, d -> list.getChildAt(i).animate().alpha(rowAlpha(d)).setDuration(200).start() }
+            return
+        }
+        rowKeys = keys
+        // Where each row was, so that rows can glide from there to where they are now.
+        val before = HashMap<String, Pair<Int, Float>>()
+        for (i in 0 until list.childCount) {
+            val v = list.getChildAt(i)
+            (v.tag as? String)?.let { before[it] = (v.top + v.translationY.toInt()) to v.alpha }
+        }
+        val animate = listBuilt
+        listBuilt = true
+        val ids = installed.mapTo(HashSet()) { it.id }
+        val removed = (0 until list.childCount).map { list.getChildAt(it) }.filter { it.tag is String && it.tag !in ids }
         list.removeAllViews()
+        // Rows of deleted dictionaries slide away where they were, while the rows below close up.
+        if (animate) {
+            for (v in removed) {
+                v.animate().cancel()
+                list.overlay.add(v)
+                v.animate().alpha(0f).translationX(v.width * 0.3f).setDuration(220).setInterpolator(AccelerateInterpolator())
+                    .withEndAction { list.overlay.remove(v) }.start()
+            }
+        }
         if (installed.isEmpty()) {
             list.addView(body(getString(R.string.dictionaries_empty)).apply { setPadding(dp(4), 0, 0, 0) })
             return
         }
-        installed.forEachIndexed { index, d -> list.addView(row(d, index, installed.size)) }
+        installed.forEachIndexed { index, d ->
+            list.addView(row(d, index, installed.size).apply {
+                tag = d.id
+                alpha = rowAlpha(d)
+            })
+        }
+        if (!animate) return
+        list.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                list.viewTreeObserver.removeOnPreDrawListener(this)
+                animateRows(before)
+                return true
+            }
+        })
+    }
+
+    private var rowKeys: List<Pair<InstalledDictionary, String?>>? = null
+    private var listBuilt = false
+    /** The dictionary just moved up or down, which is lifted while it moves. */
+    private var movedId: String? = null
+
+    private fun rowAlpha(d: InstalledDictionary) = if (d.enabled) 1f else 0.55f
+
+    /** Moves the rows from where they were ([before]: their tops and alphas) to where they are; new ones fade in. */
+    private fun animateRows(before: Map<String, Pair<Int, Float>>) {
+        val interpolator = DecelerateInterpolator(1.5f)
+        var added = 0
+        for (i in 0 until list.childCount) {
+            val v = list.getChildAt(i)
+            val id = v.tag as? String ?: continue
+            val target = v.alpha
+            val old = before[id]
+            if (old == null) {
+                v.alpha = 0f
+                v.translationY = dp(16).toFloat()
+                v.animate().alpha(target).translationY(0f).setStartDelay(added++ * 40L).setDuration(300).setInterpolator(interpolator).start()
+                continue
+            }
+            v.translationY = (old.first - v.top).toFloat()
+            v.alpha = old.second
+            v.animate().alpha(target).translationY(0f).setDuration(300).setInterpolator(interpolator).start()
+            if (id == movedId) {
+                v.translationZ = dp(6).toFloat()
+                v.scaleX = 1.02f
+                v.scaleY = 1.02f
+                v.animate().translationZ(0f).scaleX(1f).scaleY(1f).setDuration(300).setInterpolator(interpolator).start()
+            }
+        }
+        movedId = null
     }
 
     private fun row(d: InstalledDictionary, index: Int, count: Int): View {
@@ -273,8 +351,8 @@ class DictionariesActivity : Activity() {
         if (update != null) {
             actions.addView(textButton(getString(R.string.action_update)) { withNotificationPermission { KnownDictionaries.applyUpdate(this, update) } })
         }
-        actions.addView(iconButton(R.drawable.ic_expand_less, R.string.action_move_up, index > 0) { app.dictionaries.move(d.id, -1) })
-        actions.addView(iconButton(R.drawable.ic_expand_more, R.string.action_move_down, index < count - 1) { app.dictionaries.move(d.id, 1) })
+        actions.addView(iconButton(R.drawable.ic_expand_less, R.string.action_move_up, index > 0) { movedId = d.id; app.dictionaries.move(d.id, -1) })
+        actions.addView(iconButton(R.drawable.ic_expand_more, R.string.action_move_down, index < count - 1) { movedId = d.id; app.dictionaries.move(d.id, 1) })
         lateinit var more: ImageView
         more = iconButton(R.drawable.ic_more, R.string.action_more, true) { showMenu(d, more) }
         actions.addView(more)

@@ -62,12 +62,12 @@ class LookupController(
     /** Looks up [text]. A new top-level lookup clears the link history. */
     fun lookup(text: String, language: Language) {
         history.clear()
-        run(Query(text, language), nested = false)
+        run(Query(text, language), nested = false, ResultsView.Transition.NONE)
     }
 
     fun back(): Boolean {
         val previous = history.removeLastOrNull() ?: return false
-        run(previous, nested = history.isNotEmpty())
+        run(previous, nested = history.isNotEmpty(), ResultsView.Transition.BACK)
         return true
     }
 
@@ -76,7 +76,7 @@ class LookupController(
         job = null
     }
 
-    private fun run(query: Query, nested: Boolean) {
+    private fun run(query: Query, nested: Boolean, transition: ResultsView.Transition = ResultsView.Transition.FORWARD) {
         val (text, language) = query
         current = query
         job?.cancel()
@@ -96,7 +96,7 @@ class LookupController(
             if (rendered.result.isEmpty) {
                 view.showMessage(context.getString(R.string.no_results, rendered.result.text.ifEmpty { text }))
             } else {
-                view.bind(rendered)
+                view.bind(rendered, transition = transition)
             }
             listener.onResult(rendered.result, nested)
         }
