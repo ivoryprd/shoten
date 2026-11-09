@@ -1,9 +1,28 @@
-# Shoten
+<h1 align="center">Shoten 書店</h1>
 
-A lightweight Android pop-up dictionary for **Japanese** and **Chinese** (simplified and traditional) that
-works on top of any app or game. Open it with the assist gesture (holding the home button or the gesture
-handle, like Gemini/Circle to Search on Pixel phones). The screen freezes, the text on it is recognized
-on-device, and tapping or sliding over a word shows its dictionary entry.
+<p align="center">
+  <b>A lightweight pop-up dictionary for Japanese and Chinese that works on top of any Android app.</b><br>
+  Hold the home button, tap a word, read the definition.
+</p>
+
+<p align="center">
+  <a href="https://github.com/ivoryprd/shoten/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/ivoryprd/shoten?label=download&color=1a62d6"></a>
+  <a href="https://github.com/ivoryprd/shoten/actions/workflows/build.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/ivoryprd/shoten/build.yml?label=build"></a>
+  <img alt="Android 8.0+" src="https://img.shields.io/badge/Android-8.0%2B-3ddc84?logo=android&logoColor=white">
+  <img alt="APK size" src="https://img.shields.io/badge/APK-1.2%20MB-555">
+</p>
+
+<p align="center">
+  <img src="docs/images/word.png" width="360" alt="Looking up 勉強: Jitendex entry with furigana, senses and examples, and its kanji below">
+  &nbsp;
+  <img src="docs/images/kanji.png" width="360" alt="The kanji 強 opened from the headword: meanings, readings, strokes, grade">
+</p>
+
+Open Shoten with the assist gesture (holding the home button or the gesture handle, like Gemini or
+Circle to Search on Pixel phones). The screen freezes, its text is recognized on-device, and tapping or
+sliding over a word shows its dictionary entry.
+
+## Features
 
 - **Screen lookup (OCR)**: on-device text recognition with Google ML Kit (Japanese and Chinese models).
   Tap a character to look up the text from there, or slide your finger along a line to scan word by word.
