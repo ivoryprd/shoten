@@ -95,7 +95,10 @@ assistant API, which is what the gesture falls back to once Circle to Search is 
   the one on the screen is kept. The 縦 button (also in Settings) reads all text this way, for columns
   ML Kit doesn't recognize as vertical (small lettering, short columns in speech bubbles, screentone).
 - Selection boxes are fitted to the characters in the screenshot: the boundaries between characters
-  are placed in the gaps between them.
+  are placed in the gaps between them. Emoji are left out (ML Kit doesn't read them, or misreads
+  them as characters), and English words keep their letters' own widths. On rendered Japanese and
+  Chinese lines with emoji, English and colored words, 99% (Japanese) and 97% (Chinese) of taps on a
+  character select it; the rest are mostly characters ML Kit misreads or adds.
 - Tap outside the text, press back, or use the assist gesture again to close.
 
 Apps that block screenshots (banking apps, DRM-protected video) can't be read.

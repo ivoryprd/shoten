@@ -156,6 +156,19 @@ class OcrResultTest {
     }
 
     @Test
+    fun yenSignsAndEllipsesAreMeasuredNotTakenAsFullWidth() {
+        // 価格は¥1,280です in a 44 px font: ¥ is as narrow as the digits.
+        var x = 40f
+        val widths = listOf(44f, 44f, 44f, 23f, 25f, 9f, 25f, 25f, 25f, 44f, 44f)
+        val text = "価格は¥1,280です"
+        val symbols = text.mapIndexed { i, c -> (c.toString() to Box(x, 0f, x + widths[i], 44f)).also { x += widths[i] } }
+        val line = OcrResult.buildLine(listOf(text to Box(40f, 0f, x, 44f)), listOf(symbols))
+        val yen = line.chars.first { it.text == "¥" }.box!!
+        assertTrue("¥ is ${yen.width} wide", yen.width < 30f)
+        assertEquals(172f, yen.left, 4f)
+    }
+
+    @Test
     fun usesTheRecognizersLineBox() {
         val lineBox = Box(0f, -2f, 62f, 22f)
         val line = OcrResult.buildLine(listOf("日本語" to Box(0f, 0f, 60f, 20f)), listOf(line("日本語", 0f, 0f)), lineBox)

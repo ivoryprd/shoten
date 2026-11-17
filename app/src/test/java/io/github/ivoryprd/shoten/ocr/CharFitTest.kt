@@ -1,6 +1,7 @@
 package io.github.ivoryprd.shoten.ocr
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CharFitTest {
@@ -88,12 +89,20 @@ class CharFitTest {
      * solid yellow and orange disk 48 px wide), from x = 20; the cells of the characters.
      */
     private fun picture(colors: List<Int?>): Triple<IntArray, Int, List<Pair<Float, Float>>> {
-        val w = 20 + colors.sumOf { if (it == null) 48 else 40 } + 20
+        val w = 20 + colors.sumOf { if (it == null) 48 else if (it == PHONE) 56 else 40 } + 20
         val h = 60
         val pixels = IntArray(w * h) { white }
         val cells = ArrayList<Pair<Float, Float>>()
         var x = 20
         for (color in colors) {
+            if (color == PHONE) {
+                // Like 📱: narrow (24 px of a 56 px cell), dark gray around a blue screen.
+                for (a in x + 16 until x + 40) for (b in 8 until 52) {
+                    pixels[b * w + a] = if (a in x + 19 until x + 37 && b in 13 until 46) 0xFF1E88E5.toInt() else 0xFF424242.toInt()
+                }
+                x += 56
+                continue
+            }
             if (color == null) {
                 for (a in x + 2 until x + 46) for (b in 10 until 50) {
                     val dx = a - (x + 24)
@@ -170,5 +179,35 @@ class CharFitTest {
             assertEquals("end of $i", cell.second, c.box!!.right, 5f)
         }
         assertEquals("の笑いす", CharFit.fit(line(0.9f), pixels, w, 60, 0, 0).text)
+    }
+
+    @Test
+    fun coloredTextNextToAnEmojiIsKept() {
+        // 今多云☀ with 多云 in blue: the blue word and the emoji are told apart by their colors.
+        val blue = 0xFF1A73E8.toInt()
+        val (pixels, w, cells) = picture(listOf(black, blue, blue, null, black))
+        val fitted = CharFit.fit(read("今多云谢", 20f, w - 20f), pixels, w, 60, 0, 0)
+        assertEquals("今多云谢", fitted.text)
+        fitted.chars.zip(cells).forEachIndexed { i, (c, cell) ->
+            assertEquals("start of $i", cell.first, c.box!!.left, 5f)
+            assertEquals("end of $i", cell.second, c.box!!.right, 5f)
+        }
+    }
+
+    @Test
+    fun narrowEmojiAreCutOutWithTheirMargins() {
+        // 新的📱很好: the phone's blank margins are no characters' either.
+        val (pixels, w, cells) = picture(listOf(black, black, PHONE, black, black))
+        val fitted = CharFit.fit(read("新的很好", 20f, w - 20f), pixels, w, 60, 0, 0)
+        fitted.chars.zip(cells).forEachIndexed { i, (c, cell) ->
+            // Each character's ink (4 px in from its cell) within its box, and the phone in neither.
+            assertTrue("start of $i: ${c.box}", c.box!!.left <= cell.first + 4 && c.box!!.left >= cell.first - 12)
+            assertTrue("end of $i: ${c.box}", c.box!!.right >= cell.second - 4 && c.box!!.right <= cell.second + 12)
+        }
+    }
+
+    private companion object {
+        /** A narrow emoji, for [picture]. */
+        const val PHONE = 1
     }
 }
