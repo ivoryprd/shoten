@@ -293,6 +293,7 @@ class OcrEngine(private val prefs: Prefs) {
                             elements.map { it.text to it.boundingBox?.toBox() },
                             elements.map { e -> e.symbols.map { it.text to it.boundingBox?.toBox() } },
                             line.boundingBox?.toBox(),
+                            elements.map { e -> e.symbols.map { it.confidence } },
                         )
                     }
                 },

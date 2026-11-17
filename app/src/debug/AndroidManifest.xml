@@ -13,6 +13,7 @@
                 <action android:name="io.github.ivoryprd.shoten.debug.OCR_FILE" />
                 <action android:name="io.github.ivoryprd.shoten.debug.SUGGEST" />
                 <action android:name="io.github.ivoryprd.shoten.debug.SNAPSHOT" />
+                <action android:name="io.github.ivoryprd.shoten.debug.BENCH" />
             </intent-filter>
         </receiver>
     </application>

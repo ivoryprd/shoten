@@ -31,8 +31,11 @@ data class Box(val left: Float, val top: Float, val right: Float, val bottom: Fl
     }
 }
 
-/** One recognized character (usually one code point). [box] is null for inserted spaces. */
-class OcrChar(val text: String, val box: Box?)
+/**
+ * One recognized character (usually one code point). [box] is null for inserted spaces;
+ * [confidence] is the recognizer's (0..1; 1 where it gives none).
+ */
+class OcrChar(val text: String, val box: Box?, val confidence: Float = 1f)
 
 /**
  * A line of text. [box] is the recognizer's box of the line, or else the union of its characters.
@@ -168,16 +171,24 @@ class OcrResult(val blocks: List<OcrBlock>, val width: Int, val height: Int) {
          * Builds a line from recognized pieces (words/elements), using per-character boxes
          * ([symbols]) where they are plausible and else splitting a piece's box evenly, merging
          * half-width voicing marks, and inserting spaces between Latin words. [lineBox] is the
-         * recognizer's box of the whole line, if known.
+         * recognizer's box of the whole line, if known; [confidences], the recognizer's of the
+         * characters of [symbols].
          */
-        fun buildLine(pieces: List<Pair<String, Box?>>, symbols: List<List<Pair<String, Box?>>>?, lineBox: Box? = null): OcrLine {
+        fun buildLine(
+            pieces: List<Pair<String, Box?>>,
+            symbols: List<List<Pair<String, Box?>>>?,
+            lineBox: Box? = null,
+            confidences: List<List<Float>>? = null,
+        ): OcrLine {
             val chars = ArrayList<OcrChar>()
             pieces.forEachIndexed { index, (text, box) ->
                 val pieceSymbols = symbols?.getOrNull(index)?.takeIf { it.isNotEmpty() && it.joinToString("") { s -> s.first } == text }
-                val pieceChars = box?.takeIf { Cjk.codePoints(text).any(::isFullWidthCjk) }?.let { fitCjkCells(text, it, pieceSymbols) }
+                val built = box?.takeIf { Cjk.codePoints(text).any(::isFullWidthCjk) }?.let { fitCjkCells(text, it, pieceSymbols) }
                     ?: pieceSymbols?.takeIf { plausible(it, box) }
                         ?.map { (symbol, symbolBox) -> OcrChar(symbol, if (box != null) symbolBox?.clampTo(box) else symbolBox) }
                     ?: splitEvenly(text, box)
+                val confidence = confidences?.getOrNull(index)?.takeIf { pieceSymbols != null && it.size == built.size }
+                val pieceChars = if (confidence == null) built else built.mapIndexed { i, c -> OcrChar(c.text, c.box, confidence[i]) }
                 if (chars.isNotEmpty() && pieceChars.isNotEmpty()) {
                     val prev = chars.last().text.lastOrNull()
                     val next = pieceChars.first().text.firstOrNull()
@@ -188,7 +199,8 @@ class OcrResult(val blocks: List<OcrBlock>, val width: Int, val height: Int) {
             return OcrLine(normalize(chars), lineBox)
         }
 
-        private fun isFullWidthCjk(cp: Int) = Cjk.isHan(cp) || cp in 0x3000..0x30FF || cp in 0x31F0..0x31FF || cp in 0xFF01..0xFF60
+        private fun isFullWidthCjk(cp: Int) = Cjk.isHan(cp) || cp in 0x3000..0x30FF || cp in 0x31F0..0x31FF || cp in 0xFF01..0xFF60 ||
+            cp in 0xAC00..0xD7A3
 
         /**
          * Character boxes for a piece of Chinese or Japanese text. ML Kit's boxes of CJK characters
@@ -213,7 +225,7 @@ class OcrResult(val blocks: List<OcrBlock>, val width: Int, val height: Int) {
             }
             // ML Kit's first and last boxes are the least accurate; take the typical width from the others.
             val typical = widths?.let { w ->
-                val middle = w.indices.filter { it != 0 && it != w.lastIndex && cps[it][0].code >= 0x80 }.mapNotNull { w[it] }.sorted()
+                val middle = w.indices.filter { it != 0 && it != w.lastIndex && isFullWidthCjk(cps[it].codePointAt(0)) }.mapNotNull { w[it] }.sorted()
                 middle.getOrNull(middle.size / 2)
             }
             val judged = BooleanArray(cps.size)
@@ -224,7 +236,8 @@ class OcrResult(val blocks: List<OcrBlock>, val width: Int, val height: Int) {
                 val w = widths?.getOrNull(i)
                 when {
                     cp in 0xFF61..0xFF9F -> 0.5f
-                    cp >= 0x80 -> 1f
+                    // Not ¥, …, “ and the like: in CJK text they can be as wide as Latin letters.
+                    isFullWidthCjk(cp) -> 1f
                     typical != null && w != null && i != 0 && i != cps.lastIndex -> {
                         judged[i] = true
                         if (w >= typical * 0.75f) {
@@ -347,11 +360,11 @@ class OcrResult(val blocks: List<OcrBlock>, val width: Int, val height: Int) {
                     val combined = prev.text.singleOrNull()?.let { Cjk.combineVoicing(it, text[0]) }
                     if (combined != null) {
                         val box = if (prev.box != null && ch.box != null) prev.box.union(ch.box) else prev.box ?: ch.box
-                        out[out.size - 1] = OcrChar(combined.toString(), box)
+                        out[out.size - 1] = OcrChar(combined.toString(), box, min(prev.confidence, ch.confidence))
                         continue
                     }
                 }
-                out.add(if (text.length == 1) OcrChar(Cjk.halfWidthKanaToFull(text[0]).toString(), ch.box) else ch)
+                out.add(if (text.length == 1) OcrChar(Cjk.halfWidthKanaToFull(text[0]).toString(), ch.box, ch.confidence) else ch)
             }
             return fixHe(out)
         }
@@ -367,7 +380,7 @@ class OcrResult(val blocks: List<OcrBlock>, val width: Int, val height: Int) {
             val hiragana = neighbors.count { Cjk.isHiragana(it.code) }
             val katakana = neighbors.count { Cjk.isKatakana(it.code) || it == 'ー' }
             val toHiragana = Cjk.isKatakana(c.text[0].code)
-            if ((toHiragana && hiragana > 0 && katakana == 0) || (!toHiragana && katakana > 0 && hiragana == 0)) OcrChar(other, c.box) else c
+            if ((toHiragana && hiragana > 0 && katakana == 0) || (!toHiragana && katakana > 0 && hiragana == 0)) OcrChar(other, c.box, c.confidence) else c
         }
 
         private val HE = mapOf("へ" to "ヘ", "べ" to "ベ", "ぺ" to "ペ", "ヘ" to "へ", "ベ" to "べ", "ペ" to "ぺ")
