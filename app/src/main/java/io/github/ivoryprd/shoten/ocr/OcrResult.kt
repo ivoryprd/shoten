@@ -207,20 +207,19 @@ class OcrResult(val blocks: List<OcrBlock>, val width: Int, val height: Int) {
         }
 
         /**
-         * [chars] without the edges of a box around the text that the recognizer took for "|" at
-         * either end of the line (the dark band behind subtitles, say): it is unsure of those. Only
-         * once the characters are fitted to the ink: the edge's ink is the "|"'s, not the next
-         * character's.
+         * The indices of [chars] but the edges of a box around the text that the recognizer took
+         * for "|" at either end of the line (the dark band behind subtitles, say), and the blanks
+         * next to them: it is unsure of those. All of them if there are none.
          */
-        internal fun withoutFrames(chars: List<OcrChar>): List<OcrChar> {
+        internal fun unframed(chars: List<OcrChar>): IntRange {
             fun frame(c: OcrChar) = c.text == "|" && c.confidence < FRAME
             var from = 0
             var to = chars.size
             while (from < to && (chars[from].text.isBlank() || frame(chars[from]))) from++
             while (to > from && (chars[to - 1].text.isBlank() || frame(chars[to - 1]))) to--
             // Only blanks at the ends: the line as it is.
-            if ((0 until from).none { frame(chars[it]) } && (to until chars.size).none { frame(chars[it]) }) return chars
-            return chars.subList(from, to).toList()
+            if ((0 until from).none { frame(chars[it]) } && (to until chars.size).none { frame(chars[it]) }) return chars.indices
+            return from until to
         }
 
         /** The recognizer's confidence below which a "|" at either end of a line is taken for a frame. */

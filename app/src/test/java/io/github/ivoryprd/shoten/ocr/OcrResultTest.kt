@@ -172,14 +172,17 @@ class OcrResultTest {
     @Test
     fun framesTakenForBarsAreLeftOut() {
         fun chars(vararg c: Pair<String, Float>) = c.map { (t, conf) -> OcrChar(t, Box(0f, 0f, 1f, 1f), conf) }
+        fun unframed(vararg c: Pair<String, Float>) = chars(*c).let { all -> all.slice(OcrResult.unframed(all)).joinToString("") { it.text } }
         // A dark band behind subtitles: its edges read as | at either end, unsure.
-        assertEquals("字幕", OcrResult.withoutFrames(chars("|" to 0.1f, "字" to 0.9f, "幕" to 0.9f, "|" to 0.15f)).joinToString("") { it.text })
+        assertEquals("字幕", unframed("|" to 0.1f, " " to 1f, "字" to 0.9f, "幕" to 0.9f, "|" to 0.15f))
         // One the recognizer is sure of, or in the middle, stays.
-        assertEquals("|字", OcrResult.withoutFrames(chars("|" to 0.8f, "字" to 0.9f)).joinToString("") { it.text })
-        assertEquals("a|b", OcrResult.withoutFrames(chars("a" to 0.9f, "|" to 0.1f, "b" to 0.9f)).joinToString("") { it.text })
+        assertEquals("|字", unframed("|" to 0.8f, "字" to 0.9f))
+        assertEquals("a|b", unframed("a" to 0.9f, "|" to 0.1f, "b" to 0.9f))
         // Without a frame, blanks at the ends stay too.
         val spaced = chars("字" to 0.9f, " " to 1f)
-        assertSame(spaced, OcrResult.withoutFrames(spaced))
+        assertEquals(spaced.indices, OcrResult.unframed(spaced))
+        // Nothing but a frame.
+        assertTrue(OcrResult.unframed(chars("|" to 0.1f)).isEmpty())
     }
 
     @Test

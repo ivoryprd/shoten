@@ -66,7 +66,7 @@ class OcrEngine(private val prefs: Prefs) {
                 currentCoroutineContext().ensureActive()
                 Log.d(TAG, "$script OCR of ${bitmap.width}x${bitmap.height}: ${text.textBlocks.size} blocks in ${(System.nanoTime() - start) / 1_000_000} ms")
                 val read = rereadUnsure(input, convert(text, bitmap.width, bitmap.height), script)
-                val result = withoutFrames(fitChars(read, input))
+                val result = fitChars(read, input)
                 // Vertical text the recognizer found is read again column by column (it misreads
                 // much of it); with [vertical], text around any line is.
                 val columns = result.blocks.any { b -> b.lines.any { it.vertical && it.chars.count { c -> c.text.isNotBlank() } >= 3 } }
@@ -178,33 +178,40 @@ class OcrEngine(private val prefs: Prefs) {
         return OcrResult(result.blocks.map { b -> OcrBlock(b.lines.map { replaced[it] ?: it }) }, result.width, result.height)
     }
 
-    /**
-     * [result] without the frames around its horizontal lines taken for "|"
-     * ([OcrResult.withoutFrames]); a line's box then ends where its characters do, and a line
-     * that was nothing but a frame is left out.
-     */
-    private fun withoutFrames(result: OcrResult): OcrResult = OcrResult(
+    /** [result] with its characters' boxes fitted to the ink in [image] ([fitUnframed]). */
+    private fun fitChars(result: OcrResult, image: Bitmap): OcrResult = OcrResult(
         result.blocks.mapNotNull { block ->
-            val lines = block.lines.mapNotNull { line ->
-                val chars = if (line.vertical) line.chars else OcrResult.withoutFrames(line.chars)
-                if (chars.size == line.chars.size) return@mapNotNull line
-                if (chars.isEmpty()) return@mapNotNull null
-                val ink = chars.mapNotNull { it.box }.reduceOrNull { a, b -> a.union(b) }
-                val box = line.box
-                OcrLine(chars, if (box != null && ink != null) Box(ink.left, box.top, ink.right, box.bottom) else box)
-            }
+            val lines = block.lines.mapNotNull { fitUnframed(it, image) }
             if (lines.isEmpty()) null else OcrBlock(lines)
         },
         result.width,
         result.height,
     )
 
-    /** [result] with its characters' boxes fitted to the ink in [image] ([CharFit]). */
-    private fun fitChars(result: OcrResult, image: Bitmap): OcrResult = OcrResult(
-        result.blocks.map { block -> OcrBlock(block.lines.map { fitLine(it, image) }) },
-        result.width,
-        result.height,
-    )
+    /**
+     * [line] with its characters' boxes fitted to the ink in [image] ([fitLine]), without the frame
+     * around it that the recognizer took for "|" at its ends ([OcrResult.unframed]); null if it
+     * was nothing else. The frame is fitted with the rest, which keeps its ink from the characters
+     * next to it, and then left out; unless it took up as much room as a character: then it was a
+     * stroke of one read as "|", and the rest of the line is fitted without it.
+     */
+    private fun fitUnframed(line: OcrLine, image: Bitmap): OcrLine? {
+        val kept = if (line.vertical) line.chars.indices else OcrResult.unframed(line.chars)
+        if (kept == line.chars.indices) return fitLine(line, image)
+        if (kept.isEmpty()) return null
+        val box = line.box
+        val fitted = fitLine(line, image)
+        val fittedKept = OcrResult.unframed(fitted.chars)
+        val wide = box != null && fitted.chars.indices.any { i ->
+            val c = fitted.chars[i]
+            i !in fittedKept && c.text.isNotBlank() && (c.box?.width ?: 0f) > 0.6f * box.height
+        }
+        val chars = if (wide) fitLine(OcrLine(line.chars.slice(kept), box), image).chars else fitted.chars.slice(fittedKept)
+        if (chars.isEmpty()) return null
+        // The line's box ends where its characters do.
+        val ink = chars.mapNotNull { it.box }.reduceOrNull { a, b -> a.union(b) }
+        return OcrLine(chars, if (box != null && ink != null) Box(ink.left, box.top, ink.right, box.bottom) else box)
+    }
 
     private fun fitLine(line: OcrLine, image: Bitmap): OcrLine {
         val box = line.box ?: return line
