@@ -206,6 +206,26 @@ class OcrResult(val blocks: List<OcrBlock>, val width: Int, val height: Int) {
             return OcrLine(normalize(chars), lineBox)
         }
 
+        /**
+         * [chars] without the edges of a box around the text that the recognizer took for "|" at
+         * either end of the line (the dark band behind subtitles, say): it is unsure of those. Only
+         * once the characters are fitted to the ink: the edge's ink is the "|"'s, not the next
+         * character's.
+         */
+        internal fun withoutFrames(chars: List<OcrChar>): List<OcrChar> {
+            fun frame(c: OcrChar) = c.text == "|" && c.confidence < FRAME
+            var from = 0
+            var to = chars.size
+            while (from < to && (chars[from].text.isBlank() || frame(chars[from]))) from++
+            while (to > from && (chars[to - 1].text.isBlank() || frame(chars[to - 1]))) to--
+            // Only blanks at the ends: the line as it is.
+            if ((0 until from).none { frame(chars[it]) } && (to until chars.size).none { frame(chars[it]) }) return chars
+            return chars.subList(from, to).toList()
+        }
+
+        /** The recognizer's confidence below which a "|" at either end of a line is taken for a frame. */
+        private const val FRAME = 0.3f
+
         private fun isFullWidthCjk(cp: Int) = Cjk.isHan(cp) || cp in 0x3000..0x30FF || cp in 0x31F0..0x31FF || cp in 0xFF01..0xFF60 ||
             cp in 0xAC00..0xD7A3
 

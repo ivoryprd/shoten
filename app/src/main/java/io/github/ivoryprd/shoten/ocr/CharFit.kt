@@ -24,6 +24,13 @@ internal object CharFit {
         if (line.chars.count { it.box != null && it.text.isNotBlank() } < 2 || width <= 2 || height <= 2) return line
         val ink = analyze(pixels, width, height, line, left, top) ?: return line
         val origin = if (line.vertical) top else left
+        if (ink.others.isNotEmpty()) {
+            // A busy background (a photo, a gradient): of the measures of ink, the one whose gaps
+            // are where the recognizer's boxes have their boundaries; none fitting, the boxes stay.
+            val (profile, agreement) = (listOf(ink.profile) + ink.others).map { it to agreement(line, it, origin) }.maxBy { it.second }
+            if (agreement < AGREEMENT) return line
+            return fitTo(line, profile, origin, Excision(profile.size, emptyList()), emptyList(), plain = false)
+        }
         if (ink.emoji.isEmpty()) return fitTo(line, ink.profile, origin, Excision(ink.profile.size, emptyList()), emptyList())
         // Emoji aren't read, but their ink is there: they are cut out of the line, and what the
         // recognizer made of them (。 for 💰, say) is left out.
@@ -45,11 +52,44 @@ internal object CharFit {
     }
 
     /**
+     * How well the gaps in [profile] agree with the boundaries between [line]'s characters: the
+     * share of the boundaries with a gap near them, less half the share of the characters with
+     * one near their middle (letters of most fonts have none there), and less half for each end
+     * of the line without ink near it.
+     */
+    private fun agreement(line: OcrLine, profile: FloatArray, origin: Int): Float {
+        val boxes = line.chars.filter { it.text.isNotBlank() }.mapNotNull { it.box }
+        if (boxes.size < 2) return 0f
+        val peak = profile.maxOrNull() ?: return 0f
+        if (peak <= 0f) return 0f
+        val empty = peak * 0.03f
+        val em = line.box?.let { if (line.vertical) it.width else it.height } ?: return 0f
+        fun start(b: Box) = (if (line.vertical) b.top else b.left) - origin
+        fun end(b: Box) = (if (line.vertical) b.bottom else b.right) - origin
+        fun blankNear(at: Float, reach: Float): Boolean {
+            val from = (at - reach).roundToInt().coerceIn(0, profile.size)
+            val to = (at + reach).roundToInt().coerceIn(from, profile.size)
+            return (from until to).any { profile[it] <= empty }
+        }
+        val gaps = (0 until boxes.lastIndex).count { k -> blankNear((end(boxes[k]) + start(boxes[k + 1])) / 2, 0.35f * em) }
+        val inside = boxes.count { b -> blankNear((start(b) + end(b)) / 2, 0.12f * em) }
+        // A measure that misses the text at an end of the line (dark text on a dark part of a
+        // photo, say) would move all the boxes.
+        fun inkNear(at: Float): Boolean {
+            val from = (at - 0.5f * em).roundToInt().coerceIn(0, profile.size)
+            val to = (at + 0.5f * em).roundToInt().coerceIn(from, profile.size)
+            return (from until to).any { profile[it] > empty }
+        }
+        val ends = listOf(inkNear(start(boxes.first())), inkNear(end(boxes.last()))).count { !it }
+        return gaps.toFloat() / boxes.lastIndex - 0.5f * inside / boxes.size - 0.5f * ends
+    }
+
+    /**
      * [line] fitted to the ink [profile] along it, whose positions are those of the image from
      * [origin] on with [excision] cut out; no character covers the ink of the [emoji] (positions
-     * from [origin]).
+     * from [origin]). [plain]: on a background of one color, where all ink is text or emoji.
      */
-    private fun fitTo(line: OcrLine, profile: FloatArray, origin: Int, excision: Excision, emoji: List<IntRange>): OcrLine {
+    private fun fitTo(line: OcrLine, profile: FloatArray, origin: Int, excision: Excision, emoji: List<IntRange>, plain: Boolean = true): OcrLine {
         val vertical = line.vertical
         val boxed = line.chars.withIndex().filter { (_, c) -> c.box != null && c.text.isNotBlank() }
         if (boxed.size < 2) return line
@@ -73,8 +113,9 @@ internal object CharFit {
         val last = end(boxed.last().value.box!!)
         val cuts = FloatArray(boxed.size + 1)
         // None there: the box reaches past the ink (stretched over an emoji, say); it is further in.
-        cuts[0] = inkStart(profile, first - reach, first + reach, empty) ?: inkStart(profile, first, first + 4 * reach, empty) ?: first
-        cuts[boxed.size] = inkEnd(profile, last - reach, last + reach, empty) ?: inkEnd(profile, last - 4 * reach, last, empty) ?: last
+        // Not on a busy background, where the text can be lost in it (dark text on dark parts).
+        cuts[0] = inkStart(profile, first - reach, first + reach, empty) ?: (if (plain) inkStart(profile, first, first + 4 * reach, empty) else null) ?: first
+        cuts[boxed.size] = inkEnd(profile, last - reach, last + reach, empty) ?: (if (plain) inkEnd(profile, last - 4 * reach, last, empty) else null) ?: last
 
         // Where the boundaries should be by the characters themselves: full-width ones an em
         // wide, Latin letters and digits about half, a space between words, the blank sides of
@@ -168,8 +209,11 @@ internal object CharFit {
         return OcrLine(chars, line.box, forceVertical = vertical)
     }
 
-    /** The ink along a line: how much of it there is at each position, and where emoji are. */
-    private class Ink(val profile: FloatArray, val emoji: List<Emoji>)
+    /**
+     * The ink along a line: how much of it there is at each position, and where emoji are; on a
+     * busy background, [others]: other measures of it (no emoji then).
+     */
+    private class Ink(val profile: FloatArray, val emoji: List<Emoji>, val others: List<FloatArray> = emptyList())
 
     /** An emoji along a line: where its ink is, and what is cut out for it ([ink] with blank margins). */
     private class Emoji(val ink: IntRange, val cut: IntRange)
@@ -227,7 +271,71 @@ internal object CharFit {
             }
             out[p] = sum
         }
+        if (!uniform(pixels, w, h, vertical, a0, a1, length)) return Ink(out, emptyList(), extremes(lum, w, vertical, a0, a1, length))
         return Ink(out, emoji(pixels, diff, w, vertical, a0, a1, length, bg, strong))
+    }
+
+    /**
+     * Whether the line is on a background of one color, as on screens, not a photo or a gradient:
+     * by the strips along it just outside its box (where its text isn't), if there are any.
+     */
+    private fun uniform(pixels: IntArray, w: Int, h: Int, vertical: Boolean, a0: Int, a1: Int, length: Int): Boolean {
+        val across = if (vertical) w else h
+        val margin = max(2, (0.15f * (a1 - a0)).roundToInt())
+        val rows = ((a0 - margin).coerceAtLeast(0) until a0) + (a1 until (a1 + margin).coerceAtMost(across))
+        if (rows.size < 2) return true
+        val bins = HashMap<Int, Int>()
+        for (p in 0 until length) for (q in rows) {
+            val c = pixels[if (vertical) p * w + q else q * w + p]
+            val key = ((c shr 20) and 0xF shl 8) or ((c shr 12) and 0xF shl 4) or ((c shr 4) and 0xF)
+            bins[key] = (bins[key] ?: 0) + 1
+        }
+        val key = bins.maxByOrNull { it.value }?.key ?: return true
+        val common = floatArrayOf(((key shr 8) and 0xF) * 16 + 8f, ((key shr 4) and 0xF) * 16 + 8f, (key and 0xF) * 16 + 8f)
+        var near = 0
+        for (p in 0 until length) for (q in rows) if (distance(pixels[if (vertical) p * w + q else q * w + p], common) <= 30f) near++
+        return near >= UNIFORM * length * rows.size
+    }
+
+    /**
+     * Measures of ink for text on a busy background, by the text standing out as the darkest or
+     * the lightest there: the darkest pixels, the lightest, and either of them next to the other
+     * (outlined text: its outline around its letters, or its letters inside their outline).
+     */
+    private fun extremes(lum: IntArray, w: Int, vertical: Boolean, a0: Int, a1: Int, length: Int): List<FloatArray> {
+        fun index(p: Int, q: Int) = if (vertical) p * w + q else q * w + p
+        val histogram = IntArray(256)
+        for (p in 0 until length) for (q in a0 until a1) histogram[lum[index(p, q)]]++
+        val total = length * (a1 - a0)
+        fun quantile(f: Float): Int {
+            var count = 0
+            for (l in 0..255) {
+                count += histogram[l]
+                if (count >= f * total) return l
+            }
+            return 255
+        }
+        val dark = quantile(0.03f)
+        val light = quantile(0.97f)
+        if (light - dark < 80) return emptyList()
+        fun isDark(p: Int, q: Int) = q in a0 until a1 && p in 0 until length && lum[index(p, q)] < dark + 40
+        fun isLight(p: Int, q: Int) = q in a0 until a1 && p in 0 until length && lum[index(p, q)] > light - 40
+        val r = max(2, (0.1f * (a1 - a0)).roundToInt())
+        fun next(p: Int, q: Int, of: (Int, Int) -> Boolean) = of(p + r, q) || of(p - r, q) || of(p, q + r) || of(p, q - r)
+        val darkest = FloatArray(length)
+        val lightest = FloatArray(length)
+        val outline = FloatArray(length)
+        val letters = FloatArray(length)
+        for (p in 0 until length) for (q in a0 until a1) {
+            if (isDark(p, q)) {
+                darkest[p]++
+                if (next(p, q, ::isLight)) outline[p]++
+            } else if (isLight(p, q)) {
+                lightest[p]++
+                if (next(p, q, ::isDark)) letters[p]++
+            }
+        }
+        return listOf(darkest, lightest, outline, letters)
     }
 
     /**
@@ -509,6 +617,10 @@ internal object CharFit {
     private const val SOLID = 0.25f
     private const val MULTICOLOR = 0.06f
     private const val OTHER_COLOR = 45f
+    /** How much of the strips along a line on a screen is of one color (on photos and gradients, much less is). */
+    private const val UNIFORM = 0.8f
+    /** How well a measure of ink must agree with the recognizer's boundaries to fit boxes by it. */
+    private const val AGREEMENT = 0.5f
     private const val SQRT3 = 1.7320508f
     /** The recognizer's confidence below which a character on an emoji is taken to be the emoji misread. */
     private const val DOUBTFUL = 0.12f

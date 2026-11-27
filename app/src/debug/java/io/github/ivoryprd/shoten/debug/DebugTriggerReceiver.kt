@@ -8,8 +8,12 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Point
+import android.graphics.RectF
+import android.graphics.Shader
+import android.graphics.Typeface
 import android.icu.text.BreakIterator
 import android.os.Handler
 import android.os.Looper
@@ -34,11 +38,12 @@ import io.github.ivoryprd.shoten.ocr.CharSuggestions
 import io.github.ivoryprd.shoten.ocr.OcrScript
 import io.github.ivoryprd.shoten.ocr.await
 import io.github.ivoryprd.shoten.util.Json
+import java.io.File
+import java.util.Locale
+import kotlin.math.max
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.io.File
-import java.util.Locale
 
 /**
  * Debug builds only: test hooks for driving the app from adb (the component must be named
@@ -46,7 +51,8 @@ import java.util.Locale
  *  - SHOW_SCREEN_LOOKUP opens the screen lookup without the assist gesture.
  *  - IMPORT_DICTIONARY imports the file at the "path" extra.
  *  - OCR_FILE runs text recognition on the image at the "path" extra and logs the result (with
- *    the "vertical" extra, as vertical text; with "chars", every character's box).
+ *    the "vertical" extra, as vertical text; with "chars", every character's box; with "script"
+ *    "zh", the Chinese recognizer).
  *  - SUGGEST logs what the character in the "char" extra may be, read in the "box" (left, top,
  *    right, bottom) of the image at "path", in the "language" ("ja" or "zh"), in vertical text
  *    with the "vertical" extra.
@@ -54,6 +60,9 @@ import java.util.Locale
  *    "lines": [...]}) with the system fonts, recognizes them as the app does and taps every
  *    character's center: writes the truth, what was read and what each tap hit next to the file
  *    (.png and .out.json), to measure how well taps find the characters on real screens.
+ *    Optional: "font" (a font file), "color" (#rrggbb), "background" ("dark", "photo:<image
+ *    file>", "gradient", "paper"), "effect" ("outline", "shadow", "band": a dark band behind
+ *    each line, as subtitles), "dark".
  *  - SNAPSHOT draws the app's windows in software and saves a PNG to the "path" extra (default:
  *    cache/snapshot.png) after the optional "delay" (ms). Useful where screencap returns black
  *    frames, as on emulators without GPU acceleration. Needs hidden API access:
@@ -75,18 +84,20 @@ class DebugTriggerReceiver : BroadcastReceiver() {
                     return
                 }
                 Log.i(TAG, "Bitmap ${bitmap.width}x${bitmap.height} ${bitmap.config}")
-                app.ocr.recognizer(OcrScript.JAPANESE).process(InputImage.fromBitmap(bitmap, 0))
+                val script = if (intent.getStringExtra("script") == "zh") OcrScript.CHINESE else OcrScript.JAPANESE
+                app.ocr.recognizer(script).process(InputImage.fromBitmap(bitmap, 0))
                     .addOnSuccessListener { text ->
                         Log.i(TAG, "ML Kit raw: ${text.textBlocks.size} blocks: ${text.text.replace('\n', '|')}")
                         for (block in text.textBlocks) for (line in block.lines) {
-                            Log.i(TAG, "line '${line.text}' box=${line.boundingBox} angle=${line.angle} elements=${line.elements.size} symbols=${line.elements.sumOf { it.symbols.size }}")
+                            val confidences = line.elements.flatMap { e -> e.symbols.map { it.confidence } }
+                            Log.i(TAG, "line '${line.text}' box=${line.boundingBox} angle=${line.angle} elements=${line.elements.size} symbols=${confidences.size} confidence=${"%.3f".format(confidences.average())}")
                             for (element in line.elements) {
                                 Log.i(TAG, "  element '${element.text}' box=${element.boundingBox} symbols=" +
                                     element.symbols.joinToString(" ") { "${it.text}${it.boundingBox?.toShortString()}" })
                             }
                         }
                         CoroutineScope(Dispatchers.Default).launch {
-                            val result = app.ocr.recognize(bitmap, OcrScript.JAPANESE, intent.getBooleanExtra("vertical", false))
+                            val result = app.ocr.recognize(bitmap, script, intent.getBooleanExtra("vertical", false))
                             Log.i(TAG, "Converted: empty=${result.isEmpty} text=${result.fullText.replace('\n', '|')}")
                             for (block in result.blocks) for (line in block.lines) {
                                 Log.i(TAG, "converted '${line.text}' box=${line.box} vertical=${line.vertical}")
@@ -163,17 +174,22 @@ class DebugTriggerReceiver : BroadcastReceiver() {
         val locale = Locale.forLanguageTag(json["locale"] as? String ?: "ja")
         val size = (json["size"] as? Number)?.toFloat() ?: 40f
         val lines = (json["lines"] as List<*>).map { it.toString() }
-        val dark = json["dark"] == true
+        val background = json["background"] as? String ?: if (json["dark"] == true) "dark" else "white"
+        val dark = background == "dark"
+        val effect = json["effect"] as? String
+        val textColor = (json["color"] as? String)?.let { Color.parseColor(it) } ?: if (dark) Color.rgb(232, 232, 232) else Color.rgb(20, 20, 20)
         val script = if (locale.language == "zh") OcrScript.CHINESE else OcrScript.JAPANESE
         val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             textSize = size
             textLocale = locale
-            color = if (dark) Color.rgb(232, 232, 232) else Color.rgb(20, 20, 20)
+            color = textColor
+            (json["font"] as? String)?.let { typeface = Typeface.createFromFile(it) }
+            if (effect == "shadow") setShadowLayer(size * 0.08f, size * 0.05f, size * 0.05f, Color.argb(220, 0, 0, 0))
         }
         val pitch = (size * 2.2f).toInt()
         val bitmap = Bitmap.createBitmap(1080, pitch * lines.size + pitch, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-        canvas.drawColor(if (dark) Color.rgb(24, 24, 28) else Color.WHITE)
+        drawBackground(canvas, background, bitmap.width, bitmap.height)
         val truth = ArrayList<Any>()
         lines.forEachIndexed { i, marked ->
             // {…} is drawn in blue and <…> in red, like links and highlighted words.
@@ -199,6 +215,20 @@ class DebugTriggerReceiver : BroadcastReceiver() {
             val y = (pitch / 2 + i * pitch).toFloat()
             canvas.save()
             canvas.translate(x, y)
+            if (effect == "band") {
+                val band = Paint().apply { color = Color.argb(150, 0, 0, 0) }
+                canvas.drawRect(-size * 0.3f, -size * 0.25f, layout.getLineWidth(0) + size * 0.3f, layout.height + size * 0.25f, band)
+            }
+            if (effect == "outline") {
+                // Outlined text, as on photos and in videos: a dark stroke around the letters.
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = size * 0.12f
+                paint.strokeJoin = Paint.Join.ROUND
+                paint.color = if (Color.luminance(textColor) > 0.5f) Color.rgb(10, 10, 10) else Color.WHITE
+                layout.draw(canvas)
+                paint.style = Paint.Style.FILL
+                paint.color = textColor
+            }
             layout.draw(canvas)
             canvas.restore()
             val top = y + layout.getLineTop(0)
@@ -251,6 +281,47 @@ class DebugTriggerReceiver : BroadcastReceiver() {
         File("$base.out.json").writeText(Json.write(mapOf("size" to size.toDouble(), "truth" to truth, "raw" to raw, "read" to read, "hits" to hits)))
         bitmap.recycle()
         Log.i(TAG, "Bench done: $base.out.json")
+    }
+
+    /** Draws a BENCH background: white, dark, a photo (cropped to fill), a colorful gradient or paper. */
+    private fun drawBackground(canvas: Canvas, background: String, w: Int, h: Int) {
+        when {
+            background == "dark" -> canvas.drawColor(Color.rgb(24, 24, 28))
+            background.startsWith("photo:") -> {
+                val photo = BitmapFactory.decodeFile(background.removePrefix("photo:"))
+                if (photo == null) {
+                    canvas.drawColor(Color.GRAY)
+                    return
+                }
+                val scale = max(w.toFloat() / photo.width, h.toFloat() / photo.height)
+                val dw = photo.width * scale
+                val dh = photo.height * scale
+                canvas.drawBitmap(photo, null, RectF((w - dw) / 2, (h - dh) / 2, (w + dw) / 2, (h + dh) / 2), Paint(Paint.FILTER_BITMAP_FLAG))
+                photo.recycle()
+            }
+            background == "gradient" -> {
+                val shader = LinearGradient(0f, 0f, w.toFloat(), h.toFloat(), intArrayOf(Color.rgb(255, 204, 128), Color.rgb(244, 143, 177), Color.rgb(129, 212, 250), Color.rgb(197, 225, 165)), null, Shader.TileMode.CLAMP)
+                canvas.drawPaint(Paint().apply { this.shader = shader })
+            }
+            background == "paper" -> {
+                // Beige with fibers and blotches.
+                canvas.drawColor(Color.rgb(236, 226, 204))
+                val random = java.util.Random(7)
+                val p = Paint(Paint.ANTI_ALIAS_FLAG)
+                repeat(4000) {
+                    p.color = Color.argb(30 + random.nextInt(40), 120 + random.nextInt(60), 100 + random.nextInt(50), 70 + random.nextInt(40))
+                    p.strokeWidth = 1f + random.nextFloat() * 1.5f
+                    val x0 = random.nextFloat() * w
+                    val y0 = random.nextFloat() * h
+                    canvas.drawLine(x0, y0, x0 + random.nextFloat() * 30 - 15, y0 + random.nextFloat() * 30 - 15, p)
+                }
+                repeat(60) {
+                    p.color = Color.argb(20, 150, 120, 80)
+                    canvas.drawCircle(random.nextFloat() * w, random.nextFloat() * h, 20f + random.nextFloat() * 80f, p)
+                }
+            }
+            else -> canvas.drawColor(Color.WHITE)
+        }
     }
 
     @SuppressLint("PrivateApi", "DiscouragedPrivateApi") // Debug builds only.

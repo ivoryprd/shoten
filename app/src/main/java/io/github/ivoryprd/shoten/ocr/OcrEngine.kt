@@ -65,7 +65,8 @@ class OcrEngine(private val prefs: Prefs) {
                 val text = process(input, script)
                 currentCoroutineContext().ensureActive()
                 Log.d(TAG, "$script OCR of ${bitmap.width}x${bitmap.height}: ${text.textBlocks.size} blocks in ${(System.nanoTime() - start) / 1_000_000} ms")
-                val result = fitChars(convert(text, bitmap.width, bitmap.height), input)
+                val read = rereadUnsure(input, convert(text, bitmap.width, bitmap.height), script)
+                val result = withoutFrames(fitChars(read, input))
                 // Vertical text the recognizer found is read again column by column (it misreads
                 // much of it); with [vertical], text around any line is.
                 val columns = result.blocks.any { b -> b.lines.any { it.vertical && it.chars.count { c -> c.text.isNotBlank() } >= 3 } }
@@ -162,6 +163,42 @@ class OcrEngine(private val prefs: Prefs) {
         return OcrResult(blocks, first.width, first.height)
     }
 
+    /**
+     * [result] with the lines the recognizer was unsure of read again on a sheet of their own
+     * ([LineSheet]), where it reads unusual fonts better, as far as it is surer of them there.
+     */
+    private suspend fun rereadUnsure(image: Bitmap, result: OcrResult, script: OcrScript): OcrResult {
+        val unsure = result.blocks.flatMap { it.lines }.filter { !it.vertical && (LineSheet.confidence(it) ?: 1f) < LineSheet.UNSURE }
+        if (unsure.isEmpty()) return result
+        val again = LineSheet.reread(image, unsure) { sheet -> convert(process(sheet, script), sheet.width, sheet.height) }
+        val replaced = HashMap<OcrLine, OcrLine>()
+        unsure.zip(again).forEach { (before, after) -> if (after !== before) replaced[before] = after }
+        if (replaced.isEmpty()) return result
+        Log.d(TAG, "Read ${replaced.size} of ${unsure.size} unsure lines better on a sheet")
+        return OcrResult(result.blocks.map { b -> OcrBlock(b.lines.map { replaced[it] ?: it }) }, result.width, result.height)
+    }
+
+    /**
+     * [result] without the frames around its horizontal lines taken for "|"
+     * ([OcrResult.withoutFrames]); a line's box then ends where its characters do, and a line
+     * that was nothing but a frame is left out.
+     */
+    private fun withoutFrames(result: OcrResult): OcrResult = OcrResult(
+        result.blocks.mapNotNull { block ->
+            val lines = block.lines.mapNotNull { line ->
+                val chars = if (line.vertical) line.chars else OcrResult.withoutFrames(line.chars)
+                if (chars.size == line.chars.size) return@mapNotNull line
+                if (chars.isEmpty()) return@mapNotNull null
+                val ink = chars.mapNotNull { it.box }.reduceOrNull { a, b -> a.union(b) }
+                val box = line.box
+                OcrLine(chars, if (box != null && ink != null) Box(ink.left, box.top, ink.right, box.bottom) else box)
+            }
+            if (lines.isEmpty()) null else OcrBlock(lines)
+        },
+        result.width,
+        result.height,
+    )
+
     /** [result] with its characters' boxes fitted to the ink in [image] ([CharFit]). */
     private fun fitChars(result: OcrResult, image: Bitmap): OcrResult = OcrResult(
         result.blocks.map { block -> OcrBlock(block.lines.map { fitLine(it, image) }) },
@@ -171,12 +208,15 @@ class OcrEngine(private val prefs: Prefs) {
 
     private fun fitLine(line: OcrLine, image: Bitmap): OcrLine {
         val box = line.box ?: return line
-        // Room along the line for characters reaching past its box.
-        val room = 0.6f * if (line.vertical) box.width else box.height
-        val left = (box.left - if (line.vertical) 0f else room).toInt().coerceIn(0, image.width)
-        val top = (box.top - if (line.vertical) room else 0f).toInt().coerceIn(0, image.height)
-        val right = kotlin.math.ceil(box.right + if (line.vertical) 0f else room).toInt().coerceIn(0, image.width)
-        val bottom = kotlin.math.ceil(box.bottom + if (line.vertical) room else 0f).toInt().coerceIn(0, image.height)
+        // Room along the line for characters reaching past its box, and a strip on either side
+        // of it, to tell whether its background is a screen's or a photo's.
+        val em = if (line.vertical) box.width else box.height
+        val room = 0.6f * em
+        val side = 0.2f * em
+        val left = (box.left - if (line.vertical) side else room).toInt().coerceIn(0, image.width)
+        val top = (box.top - if (line.vertical) room else side).toInt().coerceIn(0, image.height)
+        val right = kotlin.math.ceil(box.right + if (line.vertical) side else room).toInt().coerceIn(0, image.width)
+        val bottom = kotlin.math.ceil(box.bottom + if (line.vertical) room else side).toInt().coerceIn(0, image.height)
         if (right - left < 3 || bottom - top < 3) return line
         return try {
             val pixels = IntArray((right - left) * (bottom - top))

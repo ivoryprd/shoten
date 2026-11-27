@@ -206,6 +206,63 @@ class CharFitTest {
         }
     }
 
+    /**
+     * Characters of [widths] (two strokes each, like those of [line]) over a busy background: random
+     * patches of mid-tone colors, as a photo. [outlined]: white letters with a black outline.
+     */
+    private fun onPhoto(widths: List<Int>, outlined: Boolean): Triple<IntArray, Int, List<Pair<Float, Float>>> {
+        val w = 20 + widths.sum() + 20
+        val h = 60
+        val random = java.util.Random(3)
+        val pixels = IntArray(w * h)
+        // Patches of 6 to 30 pixels, of lightness 90..200 and some color.
+        var y = 0
+        while (y < h) {
+            val ph = 6 + random.nextInt(24)
+            var x = 0
+            while (x < w) {
+                val pw = 6 + random.nextInt(24)
+                val l = 90 + random.nextInt(110)
+                val c = (0xFF shl 24) or ((l + random.nextInt(40) - 20).coerceIn(0, 255) shl 16) or (l shl 8) or (l + random.nextInt(40) - 20).coerceIn(0, 255)
+                for (a in x until minOf(w, x + pw)) for (b in y until minOf(h, y + ph)) pixels[b * w + a] = c
+                x += pw
+            }
+            y += ph
+        }
+        val cells = ArrayList<Pair<Float, Float>>()
+        var x = 20
+        val stroke = { a: Int, b: Int, cw: Int, left: Int -> (a - left - cw / 10) in 0 until cw / 4 || (a - left) in (cw * 3 / 5) until (cw - cw / 10) }
+        for (cw in widths) {
+            val left = x
+            if (outlined) {
+                // The outline: 3 pixels around the strokes.
+                for (a in left until left + cw) for (b in 7 until 53) {
+                    val near = (-3..3).any { d -> stroke(a + d, b, cw, left) } && b in 7 until 53
+                    if (near) pixels[b * w + a] = black
+                }
+            }
+            for (a in left until left + cw) for (b in 10 until 50) if (stroke(a, b, cw, left)) pixels[b * w + a] = if (outlined) white else black
+            cells += left.toFloat() to (left + cw).toFloat()
+            x += cw
+        }
+        return Triple(pixels, w, cells)
+    }
+
+    @Test
+    fun boxesFitTextOnAPhoto() {
+        for (outlined in listOf(false, true)) {
+            val widths = listOf(40, 40, 40, 40, 40, 40)
+            val (pixels, w, cells) = onPhoto(widths, outlined)
+            // The recognizer's boxes a little off, as usual.
+            val chars = cells.map { (a, z) -> OcrChar("字", Box(a + 9f, 10f, z + 9f, 50f)) }
+            val fitted = CharFit.fit(OcrLine(chars, Box(29f, 10f, cells.last().second + 9f, 50f)), pixels, w, 60, 0, 0)
+            fitted.chars.zip(cells).forEachIndexed { i, (c, cell) ->
+                assertEquals("start of $i (outlined: $outlined)", cell.first, c.box!!.left, 6f)
+                assertEquals("end of $i (outlined: $outlined)", cell.second, c.box!!.right, 6f)
+            }
+        }
+    }
+
     private companion object {
         /** A narrow emoji, for [picture]. */
         const val PHONE = 1

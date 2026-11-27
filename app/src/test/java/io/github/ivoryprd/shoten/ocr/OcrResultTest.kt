@@ -3,6 +3,7 @@ package io.github.ivoryprd.shoten.ocr
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -166,6 +167,19 @@ class OcrResultTest {
         val yen = line.chars.first { it.text == "¥" }.box!!
         assertTrue("¥ is ${yen.width} wide", yen.width < 30f)
         assertEquals(172f, yen.left, 4f)
+    }
+
+    @Test
+    fun framesTakenForBarsAreLeftOut() {
+        fun chars(vararg c: Pair<String, Float>) = c.map { (t, conf) -> OcrChar(t, Box(0f, 0f, 1f, 1f), conf) }
+        // A dark band behind subtitles: its edges read as | at either end, unsure.
+        assertEquals("字幕", OcrResult.withoutFrames(chars("|" to 0.1f, "字" to 0.9f, "幕" to 0.9f, "|" to 0.15f)).joinToString("") { it.text })
+        // One the recognizer is sure of, or in the middle, stays.
+        assertEquals("|字", OcrResult.withoutFrames(chars("|" to 0.8f, "字" to 0.9f)).joinToString("") { it.text })
+        assertEquals("a|b", OcrResult.withoutFrames(chars("a" to 0.9f, "|" to 0.1f, "b" to 0.9f)).joinToString("") { it.text })
+        // Without a frame, blanks at the ends stay too.
+        val spaced = chars("字" to 0.9f, " " to 1f)
+        assertSame(spaced, OcrResult.withoutFrames(spaced))
     }
 
     @Test
