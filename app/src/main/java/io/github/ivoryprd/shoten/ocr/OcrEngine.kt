@@ -192,8 +192,8 @@ class OcrEngine(private val prefs: Prefs) {
      * [line] with its characters' boxes fitted to the ink in [image] ([fitLine]), without the frame
      * around it that the recognizer took for "|" at its ends ([OcrResult.unframed]); null if it
      * was nothing else. The frame is fitted with the rest, which keeps its ink from the characters
-     * next to it, and then left out; unless it took up as much room as a character: then it was a
-     * stroke of one read as "|", and the rest of the line is fitted without it.
+     * next to it, and then left out; unless it took up as much room as a character: then it was
+     * one, or a stroke of one, read as "|", and the rest of the line is fitted without it.
      */
     private fun fitUnframed(line: OcrLine, image: Bitmap): OcrLine? {
         val kept = if (line.vertical) line.chars.indices else OcrResult.unframed(line.chars)

@@ -213,22 +213,7 @@ class CharFitTest {
     private fun onPhoto(widths: List<Int>, outlined: Boolean): Triple<IntArray, Int, List<Pair<Float, Float>>> {
         val w = 20 + widths.sum() + 20
         val h = 60
-        val random = java.util.Random(3)
-        val pixels = IntArray(w * h)
-        // Patches of 6 to 30 pixels, of lightness 90..200 and some color.
-        var y = 0
-        while (y < h) {
-            val ph = 6 + random.nextInt(24)
-            var x = 0
-            while (x < w) {
-                val pw = 6 + random.nextInt(24)
-                val l = 90 + random.nextInt(110)
-                val c = (0xFF shl 24) or ((l + random.nextInt(40) - 20).coerceIn(0, 255) shl 16) or (l shl 8) or (l + random.nextInt(40) - 20).coerceIn(0, 255)
-                for (a in x until minOf(w, x + pw)) for (b in y until minOf(h, y + ph)) pixels[b * w + a] = c
-                x += pw
-            }
-            y += ph
-        }
+        val pixels = photo(w, h)
         val cells = ArrayList<Pair<Float, Float>>()
         var x = 20
         val stroke = { a: Int, b: Int, cw: Int, left: Int -> (a - left - cw / 10) in 0 until cw / 4 || (a - left) in (cw * 3 / 5) until (cw - cw / 10) }
@@ -246,6 +231,56 @@ class CharFitTest {
             x += cw
         }
         return Triple(pixels, w, cells)
+    }
+
+    /** [w] × [h] pixels of a busy background: patches of 6 to 30 pixels, of lightness 90..200 and some color, as a photo. */
+    private fun photo(w: Int, h: Int): IntArray {
+        val random = java.util.Random(3)
+        val pixels = IntArray(w * h)
+        var y = 0
+        while (y < h) {
+            val ph = 6 + random.nextInt(24)
+            var x = 0
+            while (x < w) {
+                val pw = 6 + random.nextInt(24)
+                val l = 90 + random.nextInt(110)
+                val c = (0xFF shl 24) or ((l + random.nextInt(40) - 20).coerceIn(0, 255) shl 16) or (l shl 8) or (l + random.nextInt(40) - 20).coerceIn(0, 255)
+                for (a in x until minOf(w, x + pw)) for (b in y until minOf(h, y + ph)) pixels[b * w + a] = c
+                x += pw
+            }
+            y += ph
+        }
+        return pixels
+    }
+
+    @Test
+    fun aBandBehindTheTextIsNotTakenForIt() {
+        // White text on a black band across a photo, the band 20 pixels longer than the text at
+        // either end; the recognizer's boxes a little too wide, so that the photo beyond the band
+        // is within reach of the line's ends.
+        val widths = listOf(40, 40, 40, 40, 40)
+        val w = 40 + widths.sum() + 40
+        val h = 70
+        val pixels = photo(w, h)
+        for (a in 20 until w - 20) for (b in 2 until 68) pixels[b * w + a] = black
+        val cells = ArrayList<Pair<Float, Float>>()
+        var x = 40
+        for (cw in widths) {
+            for (a in x until x + cw) for (b in 15 until 55) {
+                if ((a - x - cw / 10) in 0 until cw / 4 || (a - x) in (cw * 3 / 5) until (cw - cw / 10)) pixels[b * w + a] = white
+            }
+            cells += x.toFloat() to (x + cw).toFloat()
+            x += cw
+        }
+        val left = 26f
+        val right = x + 14f
+        val step = (right - left) / widths.size
+        val chars = widths.indices.map { OcrChar("字", Box(left + it * step, 15f, left + (it + 1) * step, 55f)) }
+        val fitted = CharFit.fit(OcrLine(chars, Box(left, 15f, right, 55f)), pixels, w, h, 0, 0)
+        fitted.chars.zip(cells).forEachIndexed { i, (c, cell) ->
+            assertEquals("start of $i", cell.first, c.box!!.left, 6f)
+            assertEquals("end of $i", cell.second, c.box!!.right, 6f)
+        }
     }
 
     @Test

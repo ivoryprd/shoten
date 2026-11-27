@@ -272,6 +272,27 @@ internal object CharFit {
             out[p] = sum
         }
         if (!uniform(pixels, w, h, vertical, a0, a1, length)) return Ink(out, emptyList(), extremes(lum, w, vertical, a0, a1, length))
+        // Beyond the ends of the line's box, where the strips above and below the line aren't of
+        // the background's color either, there is no text: it is beyond the edge of a band or a
+        // box behind the text (a photo around it, the band being the background here), or an
+        // icon or a divider taller than the line.
+        val across = if (vertical) w else h
+        val margin = max(2, (0.15f * (a1 - a0)).roundToInt())
+        val boxStart = (if (vertical) box.top - top else box.left - left).roundToInt()
+        val boxEnd = (if (vertical) box.bottom - top else box.right - left).roundToInt()
+        fun notBackground(p: Int, rows: IntRange): Float {
+            var count = 0
+            var n = 0
+            for (q in rows.first.coerceAtLeast(0)..rows.last.coerceAtMost(across - 1)) {
+                if (diff[if (vertical) p * w + q else q * w + p] > NOT_BACKGROUND) count++
+                n++
+            }
+            return if (n == 0) 0f else count.toFloat() / n
+        }
+        for (p in 0 until length) {
+            if (p in boxStart until boxEnd) continue
+            if (notBackground(p, a0 - margin until a0) >= BEYOND && notBackground(p, a1 until a1 + margin) >= BEYOND) out[p] = 0f
+        }
         return Ink(out, emoji(pixels, diff, w, vertical, a0, a1, length, bg, strong))
     }
 
@@ -621,6 +642,13 @@ internal object CharFit {
     private const val UNIFORM = 0.8f
     /** How well a measure of ink must agree with the recognizer's boundaries to fit boxes by it. */
     private const val AGREEMENT = 0.5f
+    /**
+     * How much of the strips along a line, above and below it, is not of the background's color
+     * where it is beyond the edge of a band or a box behind the text (a photo around it), and how
+     * far from it a pixel is to count (more than noise in a video frame).
+     */
+    private const val BEYOND = 0.5f
+    private const val NOT_BACKGROUND = 24
     private const val SQRT3 = 1.7320508f
     /** The recognizer's confidence below which a character on an emoji is taken to be the emoji misread. */
     private const val DOUBTFUL = 0.12f
