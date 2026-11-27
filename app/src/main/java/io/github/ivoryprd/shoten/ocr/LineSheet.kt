@@ -11,6 +11,7 @@ import android.graphics.RectF
 import android.util.Log
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
@@ -41,8 +42,15 @@ internal class LineSheet private constructor(val bitmap: Bitmap, private val row
             if (row >= 0) found[row] += line
         }
         return rows.mapIndexed { i, row ->
-            val lines = found[i].sortedBy { it.box?.left ?: 0f }
-            if (lines.isEmpty()) return@mapIndexed null
+            // The widest line read in the row, and pieces of it beside it (the recognizer can split
+            // a line); not what is above or below it, cut into the row with it (a sign behind the
+            // text in a photo).
+            val main = found[i].maxByOrNull { it.box!!.width } ?: return@mapIndexed null
+            val m = main.box!!
+            val lines = found[i].filter {
+                val b = it.box!!
+                it === main || (b.left >= m.right - EM / 4f || b.right <= m.left + EM / 4f) && abs(b.centerY - m.centerY) < EM / 3f
+            }.sortedBy { it.box!!.left }
             fun Box.back() = Box(
                 row.crop.left + (left - PAD) / row.scale,
                 row.crop.top + (top - row.top) / row.scale,

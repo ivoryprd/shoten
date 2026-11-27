@@ -46,6 +46,17 @@ class LineSheetTest {
     }
 
     @Test
+    fun onlyWhatIsBesideTheLineIsReadWithIt() {
+        val image = Bitmap.createBitmap(800, 300, Bitmap.Config.ARGB_8888)
+        val sheet = LineSheet.create(image, listOf(line("今日は晴れ", Box(100f, 50f, 300f, 90f), 0.3f)))!!
+        fun read(text: String, left: Float, top: Float, width: Float) = line(text, Box(left, top, left + width, top + 48f), 0.8f)
+        // The line in two pieces, and the bottom of a sign above it, cut into the row with it.
+        val pieces = listOf(read("今日は", 40f, 36f, 144f), read("晴れ", 196f, 38f, 96f), read("081", 120f, 4f, 60f))
+        val back = sheet.mapBack(OcrResult(listOf(OcrBlock(pieces)), sheet.bitmap.width, sheet.bitmap.height))
+        assertEquals("今日は 晴れ", back[0]!!.text)
+    }
+
+    @Test
     fun theReadingTheRecognizerIsSurerOfIsKept() = runBlocking {
         val image = Bitmap.createBitmap(800, 300, Bitmap.Config.ARGB_8888)
         val unsure = line("今日け", Box(100f, 50f, 220f, 90f), 0.2f)
