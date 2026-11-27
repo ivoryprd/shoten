@@ -19,8 +19,8 @@ android {
         applicationId = "io.github.ivoryprd.shoten"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "0.1.12"
+        versionCode = 14
+        versionName = "0.1.13"
 
         // Optional: build for specific ABIs only, e.g. -Pshoten.abiFilters=arm64-v8a. This mostly
         // matters for the offline flavor, whose bundled OCR library is ~11 MB per ABI.

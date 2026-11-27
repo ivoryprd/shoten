@@ -22,9 +22,9 @@ import kotlin.math.min
  * scaled so that its characters are [EM] pixels tall, as rows far enough apart to be read as
  * separate lines. The recognizer reads unusual fonts (brush, display, serif) better so than as they
  * are on the page, if not always: of the readings of a line, the one it is surest of is kept, if it
- * has no fewer characters than the first. Lines it is still unsure of are read once more as outlined text
- * ([Look.OUTLINED]): their letters made out from their outlines, solid black on white, which the
- * recognizer reads far better than heavy outlined fonts on photos.
+ * has no fewer characters than the first. Lines it is still unsure of are read once more as
+ * outlined text ([Look.OUTLINED]): their letters made out from their outlines, solid black on
+ * white, which the recognizer reads far better than heavy outlined fonts on photos.
  */
 internal class LineSheet private constructor(val bitmap: Bitmap, private val rows: List<Row>) {
     /** A row of a sheet: [line], cut out of the image at [crop] and drawn at [top], [scale] times as large. */

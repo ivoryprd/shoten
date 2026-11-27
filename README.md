@@ -96,12 +96,30 @@ assistant API, which is what the gesture falls back to once Circle to Search is 
   ML Kit doesn't recognize as vertical (small lettering, short columns in speech bubbles, screentone).
 - Selection boxes are fitted to the characters in the screenshot: the boundaries between characters
   are placed in the gaps between them. Emoji are left out (ML Kit doesn't read them, or misreads
-  them as characters), and English words keep their letters' own widths. On rendered Japanese and
-  Chinese lines with emoji, English and colored words, 99% (Japanese) and 97% (Chinese) of taps on a
-  character select it; the rest are mostly characters ML Kit misreads or adds.
+  them as characters), and English words keep their letters' own widths. On photos, gradients and
+  patterned backgrounds the boxes follow whichever of the text's fill, outline or shadow lines up
+  with what ML Kit read (or stay where ML Kit put them if none does), and the band behind subtitles
+  isn't taken for text.
+- Lines ML Kit is unsure of (unusual fonts, text on photos) are read again on their own: cut out, in
+  gray and at the size ML Kit reads best, and, if it is still unsure, as outlined text with the
+  letters filled in. The reading it is surest of is kept, unless it has fewer characters.
 - Tap outside the text, press back, or use the assist gesture again to close.
 
 Apps that block screenshots (banking apps, DRM-protected video) can't be read.
+
+### Accuracy
+
+Measured on rendered Japanese and Chinese (simplified and traditional) test lines, read as the app
+reads a screenshot, tapping every character (the debug build's `BENCH` action):
+
+| Lines | Taps that select the character tapped (ja / zh) | Characters read right (ja / zh) |
+|---|---|---|
+| System fonts, with emoji, English and colored words | 98% / 97% | 97% / 91% |
+| Brush, display, pixel and handwriting-like fonts | 98% / 96% | 96% / 86% |
+| On photos, gradients, paper and bands; outlined or shadowed | 98% / 90% | 97% / 93% |
+| Those fonts on photos, outlined or shadowed | 86% / 92% | 82% / 89% |
+
+Missed taps are mostly on characters ML Kit misreads, leaves out or adds.
 
 ## Dictionaries
 
