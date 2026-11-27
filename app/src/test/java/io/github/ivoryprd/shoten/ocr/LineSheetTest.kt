@@ -50,11 +50,15 @@ class LineSheetTest {
         val image = Bitmap.createBitmap(800, 300, Bitmap.Config.ARGB_8888)
         val unsure = line("今日け", Box(100f, 50f, 220f, 90f), 0.2f)
         val sure = line("明日", Box(300f, 200f, 380f, 240f), 0.5f)
-        // The sheet reads both again: the first with more confidence, the second with less.
+        // The gray sheet reads both again: the first with more confidence, the second with less
+        // (and the outlined one, which the second is read on as well, nothing).
+        var sheets = 0
         val kept = LineSheet.reread(image, listOf(unsure, sure)) { sheet ->
             fun row(text: String, top: Float, confidence: Float) = line(text, Box(40f, top, 40f + 48f * text.length, top + 48f), confidence)
+            if (sheets++ > 0) return@reread OcrResult(emptyList(), sheet.width, sheet.height)
             OcrResult(listOf(OcrBlock(listOf(row("今日は", 42f, 0.8f), row("明目", 138f, 0.3f)))), sheet.width, sheet.height)
         }
+        assertEquals(2, sheets)
         assertEquals("今日は", kept[0].text)
         assertSame(sure, kept[1])
 
@@ -63,6 +67,12 @@ class LineSheetTest {
             OcrResult(listOf(OcrBlock(listOf(line("今日", Box(40f, 42f, 136f, 90f), 0.9f)))), sheet.width, sheet.height)
         }
         assertSame(unsure, shorter[0])
+        // One with a character the first reading left out is.
+        val dropped = line("今は", Box(100f, 50f, 220f, 90f), 0.2f)
+        val longer = LineSheet.reread(image, listOf(dropped)) { sheet ->
+            OcrResult(listOf(OcrBlock(listOf(line("今日は", Box(40f, 42f, 184f, 90f), 0.7f)))), sheet.width, sheet.height)
+        }
+        assertEquals("今日は", longer[0].text)
     }
 
     @Test

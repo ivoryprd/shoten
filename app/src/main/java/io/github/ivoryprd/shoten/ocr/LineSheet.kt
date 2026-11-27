@@ -8,6 +8,7 @@ import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
+import android.util.Log
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlin.math.ceil
@@ -19,8 +20,8 @@ import kotlin.math.min
  * Lines of horizontal text read again on a sheet of their own: each cut out of the image, in gray,
  * scaled so that its characters are [EM] pixels tall, as rows far enough apart to be read as
  * separate lines. The recognizer reads unusual fonts (brush, display, serif) better so than as they
- * are on the page, if not always: of the readings of a line, the one it is surer of is kept, if it
- * has as many characters. Lines it is still unsure of are read once more as outlined text
+ * are on the page, if not always: of the readings of a line, the one it is surest of is kept, if it
+ * has no fewer characters than the first. Lines it is still unsure of are read once more as outlined text
  * ([Look.OUTLINED]): their letters made out from their outlines, solid black on white, which the
  * recognizer reads far better than heavy outlined fonts on photos.
  */
@@ -73,6 +74,8 @@ internal class LineSheet private constructor(val bitmap: Bitmap, private val row
         /** How much surer of a line the recognizer must be on the sheet for that reading to be kept. */
         private const val MARGIN = 0.02f
 
+        private const val TAG = "LineSheet"
+
         /** The average confidence of the recognizer in [line]'s characters, or null if it gave none. */
         fun confidence(line: OcrLine): Float? {
             val chars = line.chars.filter { it.text.isNotBlank() }
@@ -83,7 +86,7 @@ internal class LineSheet private constructor(val bitmap: Bitmap, private val row
         /**
          * Reads [lines] of [image] again with [recognize], on as many sheets as they take, in each
          * [Look] (in the next only those it is still [UNSURE] of): for each line, the reading of it
-         * to keep (the first one, unless the recognizer is surer of another with as many characters).
+         * to keep (the first one, unless the recognizer is surer of another with no fewer characters).
          */
         suspend fun reread(image: Bitmap, lines: List<OcrLine>, recognize: suspend (Bitmap) -> OcrResult): List<OcrLine> {
             val out = lines.toMutableList()
@@ -101,9 +104,13 @@ internal class LineSheet private constructor(val bitmap: Bitmap, private val row
                 chunk.forEachIndexed { k, i ->
                     val again = read[k] ?: return@forEachIndexed
                     val after = confidence(again) ?: return@forEachIndexed
-                    // As many characters (one left out or added would move the others), read
-                    // with more confidence.
-                    if (count(again) == count(lines[i]) && after > best[i]!! + MARGIN) {
+                    if (Log.isLoggable(TAG, Log.DEBUG)) {
+                        Log.d(TAG, "$look ${lines[i].box}: '${lines[i].text}' (${confidence(lines[i])}) -> '${again.text}' ($after)")
+                    }
+                    // No fewer characters (one left out would move the others: heavy fonts on
+                    // photos are what the recognizer leaves characters out of), read with more
+                    // confidence.
+                    if (count(again) >= count(lines[i]) && after > best[i]!! + MARGIN) {
                         out[i] = again
                         best[i] = after
                     }
